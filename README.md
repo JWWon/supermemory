@@ -419,3 +419,9 @@ Your app / AI tool
 <p align="center">
   <strong>Give your AI a memory. It's about time..</strong>
 </p>
+
+## Backups
+
+`~/.local/bin/supermemory-backup.sh`, daily 04:30 via `com.ryan.supermemory-backup`.
+It lives outside this repo because macOS TCC blocks launchd from executing or
+reading anything under `~/Documents` (exit 126, "Operation not permitted").

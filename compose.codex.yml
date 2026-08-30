@@ -1,0 +1,49 @@
+services:
+  server:
+    env_file: !override [.env.codex]
+    environment:
+      OPENAI_BASE_URL: http://codex-bridge:8787/v1
+      OPENAI_API_KEY: ${CODEX_BRIDGE_TOKEN:?set CODEX_BRIDGE_TOKEN in .env.codex}
+      OPENAI_MODEL: ${CODEX_BRIDGE_MODEL:-gpt-5.6-luna}
+      OPENAI_FAST_MODEL: ${CODEX_BRIDGE_MODEL:-gpt-5.6-luna}
+      OPENAI_TEXT_MODEL: ${CODEX_BRIDGE_MODEL:-gpt-5.6-luna}
+      SUPERMEMORY_INGEST_CONCURRENCY: "1"
+    depends_on:
+      codex-bridge:
+        condition: service_healthy
+    extra_hosts: !override
+      - "host.docker.internal:host-gateway"
+      - "api.openai.com:127.0.0.1"
+
+  codex-bridge:
+    build: ./services/codex-bridge
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=64m,mode=1777
+      - /home/bridge:rw,nosuid,nodev,size=1m,uid=10002,gid=10002,mode=0700
+    environment:
+      CODEX_HOME: /var/lib/codex
+      CODEX_BRIDGE_TOKEN: ${CODEX_BRIDGE_TOKEN:?set CODEX_BRIDGE_TOKEN in .env.codex}
+      CODEX_BRIDGE_MODEL: ${CODEX_BRIDGE_MODEL:-gpt-5.6-luna}
+      CODEX_BRIDGE_TIMEOUT_SECONDS: "240"
+      CODEX_BRIDGE_WORKSPACE: /workspace
+    volumes:
+      - codex-auth:/var/lib/codex
+    expose:
+      - "8787"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import os, urllib.request; request = urllib.request.Request('http://127.0.0.1:8787/health', headers={'Authorization': 'Bearer ' + os.environ['CODEX_BRIDGE_TOKEN']}); urllib.request.urlopen(request, timeout=3)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  codex-auth:

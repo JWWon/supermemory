@@ -1,0 +1,2 @@
+openai-codex==0.147.0
+jsonschema==4.26.0

@@ -1,0 +1,19 @@
+services:
+  server:
+    ports: !override
+      - "127.0.0.1:17767:6767"
+    volumes: !override
+      - sm-codex-canary-data:/data
+    environment:
+      STORAGE_PUBLIC_URL: http://server:6767/files
+
+  codex-bridge:
+    volumes: !override
+      - codex-auth:/var/lib/codex
+      - ./services/codex-bridge/tests/fixtures/never-read.txt:/canary/never-read.txt:ro
+
+volumes:
+  codex-auth:
+    external: true
+    name: supermemory_codex-auth
+  sm-codex-canary-data:

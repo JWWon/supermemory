@@ -10,6 +10,7 @@ node_modules
 
 # Local env files
 .env
+.env.codex
 .env.local
 .env.development.local
 .env.test.local
@@ -43,3 +44,5 @@ yarn-error.log*
 .venv
 .arch
 __pycache__
+media/
+backups/

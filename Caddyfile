@@ -1,0 +1,11 @@
+:8443 {
+  handle_path /media/* {
+    root * /srv/media
+    file_server browse
+  }
+  handle {
+    reverse_proxy server:6767 {
+      header_up Host {upstream_hostport}
+    }
+  }
+}

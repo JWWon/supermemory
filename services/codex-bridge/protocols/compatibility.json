@@ -1,0 +1,22 @@
+{
+  "profiles": {
+    "chat-completions-tools-v1": {
+      "endpoint": "/v1/chat/completions",
+      "streaming": false,
+      "features": [
+        "json_object",
+        "function_tools",
+        "assistant_tool_calls",
+        "tool_results",
+        "full_message_replay"
+      ],
+      "maxToolCalls": 128
+    }
+  },
+  "testedServerVersions": {
+    "0.0.8": {
+      "profile": "chat-completions-tools-v1",
+      "fixtures": "tests/fixtures/supermemory-v0.0.8"
+    }
+  }
+}

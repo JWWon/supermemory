@@ -1,0 +1,50 @@
+services:
+  server:
+    ports: !override
+      - "127.0.0.1:18767:6767"
+    volumes: !override
+      - sm-protocol-capture-data:/data
+    env_file: !override
+      - .env.codex
+    environment:
+      OPENAI_BASE_URL: http://capture-provider:18787/v1
+      OPENAI_API_KEY: capture-only
+      OPENAI_MODEL: fixture-model
+      OPENAI_FAST_MODEL: fixture-model
+      OPENAI_TEXT_MODEL: fixture-model
+      SUPERMEMORY_INGEST_CONCURRENCY: "1"
+      STORAGE_PUBLIC_URL: http://server:6767/files
+    depends_on:
+      capture-provider:
+        condition: service_healthy
+
+  capture-provider:
+    image: python:3.13.14-slim-bookworm
+    command:
+      - python
+      - /capture/capture_provider.py
+      - --host
+      - 0.0.0.0
+      - --port
+      - "18787"
+    environment:
+      CAPTURE_FILE: /output/requests.jsonl
+      REPLIES_FILE: /capture/fixtures/supermemory-v0.0.8/replies.jsonl
+    volumes:
+      - ./services/codex-bridge/tests:/capture:ro
+      - protocol-capture-output:/output
+    expose:
+      - "18787"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:18787/v1/models', timeout=3)"
+      interval: 2s
+      timeout: 2s
+      retries: 10
+
+volumes:
+  sm-protocol-capture-data:
+  protocol-capture-output:

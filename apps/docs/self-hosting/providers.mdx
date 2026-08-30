@@ -1,7 +1,7 @@
 ---
 title: "Using supermemory local with different providers"
 sidebarTitle: "Providers"
-description: "Copy-paste .env setup for Ollama, OpenAI, Anthropic, Gemini, and OpenRouter"
+description: "Copy-paste .env setup for Ollama, OpenAI, Codex subscription, Anthropic, Gemini, and OpenRouter"
 icon: "route"
 ---
 
@@ -30,6 +30,34 @@ OPENAI_API_KEY=sk-...
 ```
 
 That's it — defaults to `gpt-5.1`. Override with `OPENAI_MODEL` if you want a different one.
+</Tab>
+
+<Tab title="Codex subscription (personal/local)">
+This repository's optional bridge can route text memory extraction through a
+ChatGPT-authenticated Codex runtime without placing an OpenAI API key in the
+SuperMemory process. It is for a personal, single-host deployment only.
+
+```bash
+cp .env.codex.example .env.codex
+openssl rand -hex 32  # paste into CODEX_BRIDGE_TOKEN
+
+docker compose --env-file .env.codex \
+  -f compose.yml -f compose.codex.yml \
+  run --rm --no-deps codex-bridge \
+  python -m supermemory_codex_bridge login
+
+docker compose --env-file .env.codex \
+  -f compose.yml -f compose.codex.yml up -d
+```
+
+The bridge uses OpenAI's official `openai-codex` Python SDK, has no published
+port, and stores ChatGPT auth in its own Docker volume. SuperMemory still owns
+the search/create memory loop; only its model transport changes.
+
+Keep the adapter private. Memory content is sent to OpenAI under the ChatGPT
+account's data policy and subscription limits. Do not use this as a public or
+multi-user OpenAI-compatible service. See
+`services/codex-bridge/README.md` for validation, upgrade, and rollback steps.
 </Tab>
 
 <Tab title="Anthropic">
