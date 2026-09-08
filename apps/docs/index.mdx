@@ -47,36 +47,19 @@ export const HeroCard = ({ title, description, href, children }) => {
         >
           Quickstart
         </a>
-        <a
-          href="/company-brain/setup"
-          className="inline-flex items-center justify-center rounded-lg px-3 py-2.5 text-sm font-medium text-gray-600 dark:text-zinc-400 hover:text-gray-900 dark:hover:text-zinc-100 hover:bg-gray-100/80 dark:hover:bg-zinc-800/80 transition-colors"
-        >
-          Set up your company brain
-        </a>
       </div>
     </div>
 
-    <div className="mt-12 sm:mt-14 grid sm:grid-cols-2 gap-5 sm:gap-6">
+    <div className="mt-12 sm:mt-14 grid sm:grid-cols-2 lg:grid-cols-3 gap-5 sm:gap-6">
       <HeroCard
         title="Developer platform"
         description="API reference, concepts, and SDKs"
         href="/overview/what-is-supermemory"
       >
         <img
-          src="/images/intro-company-brain.jpg"
+          src="/images/intro-developer-platform.jpg"
           className="w-full h-56 sm:h-64 object-cover transform group-hover:scale-[1.03] transition-transform duration-500"
           alt="Developer platform"
-        />
-      </HeroCard>
-      <HeroCard
-        title="Company brain"
-        description="Team knowledge on the same engine"
-        href="/company-brain/overview"
-      >
-        <img
-          src="/images/intro-company-brain-card.jpg"
-          className="w-full h-56 sm:h-64 object-cover transform group-hover:scale-[1.03] transition-transform duration-500"
-          alt="Company brain"
         />
       </HeroCard>
       <HeroCard
