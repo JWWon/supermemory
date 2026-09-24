@@ -4,6 +4,17 @@ Personal, single-host adapter that keeps SuperMemory's curator loop unchanged
 while routing its model calls through OpenAI's official Codex Python SDK and a
 ChatGPT subscription.
 
+The supported deployment uses SuperMemory `0.0.8`, protocol
+`chat-completions-tools-v1`, `openai-codex` and its bundled CLI `0.156.1`, and
+`gpt-6-luna` with `high` reasoning effort. SDK updates require rebuilding the
+bridge image; updating Codex on the host does not update this container.
+
+SuperMemory owns extraction, memory-tool execution, graph updates, and retrieval.
+The adapter returns model proposals only. It accepts the captured `max_tokens`
+and `serviceTier` fields for compatibility, but does not forward equivalent
+Codex token limits or service-tier settings. Unsupported protocol shapes return
+HTTP 400; this is not a general OpenAI-compatible endpoint.
+
 ## Two-way door
 
 Direct provider/API-key mode remains unchanged:
@@ -67,7 +78,7 @@ Expected output includes:
 ```text
 auth_mode=chatgpt
 plan_type=<your-chatgpt-plan>
-model=gpt-5.6-luna
+model=gpt-6-luna
 ```
 
 Never copy `codex-auth` into ordinary project backups. It contains
@@ -123,8 +134,8 @@ never appear.
 | 413 | Request exceeds 8 MiB | Do not broaden without a design review. |
 | 429 | Bridge busy or subscription quota reached | Wait for the request/reset; do not re-login for quota. |
 | 502 | Codex returned invalid tool JSON | Inspect metadata-only logs and run the fixture suite. |
-| 503 | SDK/App Server unavailable | Restart bridge after checking auth. |
-| 504 | Codex turn exceeded 240 seconds | Avoid automatic retry; inspect the affected document. |
+| 503 | SDK/App Server unavailable | An irrecoverable runtime exits after returning the error; Compose restarts it. |
+| 504 | SDK setup or generation exceeded 240 seconds | The runtime is retired and the bridge restarts. Inspect the affected document; do not automatically replay it. |
 
 SuperMemory can mark failed extraction as `done` with zero memories. Do not run
 bulk unattended ingestion until the canary suite passes, and verify positive
@@ -147,6 +158,37 @@ docker compose --env-file .env.codex \
   codex-bridge python -m unittest discover -s /app/tests -p 'test_*.py' -v
 ```
 
+### Real-runtime checks without credentials or network
+
+The runtime canary uses the pinned SDK, a synthetic loopback provider, and only
+non-secret model metadata from the running bridge. It checks JSON summaries,
+tool proposals, the effective model/reasoning settings, current tool controls,
+and refusal of native code/shell/patch attempts against a dummy private file.
+
+```bash
+docker compose --env-file .env.codex -f compose.yml -f compose.codex.yml \
+  exec -T codex-bridge python -c \
+  'import json; d=json.load(open("/var/lib/codex/models_cache.json")); print(json.dumps({"models":[m for m in d["models"] if m.get("slug")=="gpt-6-luna"]}))' \
+  | docker run --rm -i --network none --read-only --cap-drop ALL \
+      --security-opt no-new-privileges:true \
+      --tmpfs /tmp:rw,nosuid,nodev,size=128m,mode=1777 \
+      -v "$PWD/services/codex-bridge/tests:/app/tests:ro" \
+      supermemory-codex-bridge python /app/tests/runtime_canary.py
+```
+
+Luna uses Responses Lite: tool registration can be carried in
+`tool_namespaces_info` even when there is no ordinary `tools` array. Tests must
+inspect that metadata and actual refusal behavior. Model-driven asynchronous
+questions and code-mode tools can remain registered; the adapter disables
+delegation, sleep, ordinary questions, native shell access, and the code-mode
+host and its in-process fallback. A registered tool is not proof of execution.
+
+The complete request deadline includes `thread_start`, `thread.turn`, and
+generation. On timeout the official SDK process is closed; there is no separate
+interrupt call that can hang outside the deadline. Fatal failures stop the HTTP
+server after its error response is flushed, allowing the existing Compose
+restart policy to recover without a new supervisor or retry queue.
+
 ### Fresh isolated gates
 
 Start the bridge against a disposable SuperMemory volume; do not include the
@@ -168,6 +210,13 @@ The suite must report 20 cases, zero failures, and p95 at or below 120
 seconds. It verifies every atomic long-document fact, linkage on each matching
 update, superseded memories no longer marked latest, zero memories for noise,
 searchability, and exact benign-only output for file/auth injection probes.
+
+This suite evaluates model and SuperMemory behavior as well as integration.
+Keep failures classified separately from adapter contract regressions: an exact
+memory wording, graph-linkage, or retrieval-quality mismatch does not authorize
+changing memory semantics in the adapter. For adapter-only changes, run the
+unit/runtime checks and a scratch ingestion/retrieval smoke. Use the full suite
+when evaluating a model or server change.
 
 For the fail-closed gate, stop only `codex-bridge`, submit a fresh synthetic
 document to port 17767, and poll its returned document ID. It must finish

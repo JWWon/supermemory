@@ -29,7 +29,7 @@ def run_login() -> int:
 
 
 def run_check_auth() -> int:
-	model = os.environ.get("CODEX_BRIDGE_MODEL", "gpt-5.6-luna").strip()
+	model = os.environ.get("CODEX_BRIDGE_MODEL", "gpt-6-luna").strip()
 	runtime = CodexRuntime.create()
 	try:
 		plan_type = runtime.require_chatgpt()
@@ -62,7 +62,7 @@ def run_serve() -> int:
 			pass
 		finally:
 			server.server_close()
-		return 0
+		return 0 if runtime.available else 1
 	finally:
 		runtime.close()
 

@@ -7,6 +7,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import hmac
 import json
 import logging
+import math
 import os
 import re
 import threading
@@ -43,7 +44,6 @@ CODEX_ENVIRONMENT_KEYS = {
 	"TMPDIR",
 }
 DISABLED_CODEX_FEATURES = (
-	"apply_patch_freeform",
 	"apply_patch_streaming_events",
 	"apps",
 	"artifact",
@@ -52,7 +52,6 @@ DISABLED_CODEX_FEATURES = (
 	"browser_use_external",
 	"browser_use_full_cdp_access",
 	"code_mode",
-	"code_mode_buffered_exec",
 	"code_mode_host",
 	"code_mode_only",
 	"computer_use",
@@ -66,8 +65,6 @@ DISABLED_CODEX_FEATURES = (
 	"hooks",
 	"image_generation",
 	"in_app_browser",
-	"js_repl",
-	"js_repl_tools_only",
 	"mcp_2026_07_28",
 	"memories",
 	"multi_agent",
@@ -78,21 +75,17 @@ DISABLED_CODEX_FEATURES = (
 	"recommended_plugins",
 	"remote_plugin",
 	"request_permissions_tool",
-	"search_tool",
 	"shell_snapshot",
 	"shell_tool",
 	"shell_zsh_fork",
 	"skill_mcp_dependency_install",
 	"skill_search",
+	"sleep_tool",
 	"standalone_web_search",
 	"tool_call_mcp_elicitation",
-	"tool_search",
 	"tool_suggest",
 	"unified_exec",
-	"unified_exec_zsh_fork",
 	"view_image",
-	"web_search_cached",
-	"web_search_request",
 	"workspace_dependencies",
 )
 CODEX_CONFIG_OVERRIDES = tuple(
@@ -100,6 +93,11 @@ CODEX_CONFIG_OVERRIDES = tuple(
 ) + (
 	'shell_environment_policy.inherit="none"',
 	'web_search="disabled"',
+	'model_reasoning_effort="high"',
+	'agents.enabled=false',
+	'tools.update_plan.enabled=false',
+	'tools.experimental_request_user_input.enabled=false',
+	'features.code_mode_host.disable_in_process_fallback=true',
 )
 ALLOWED_TURN_ITEM_TYPES = {
 	"AgentMessageThreadItem",
@@ -153,7 +151,7 @@ class BridgeConfig:
 	) -> "BridgeConfig":
 		source = os.environ if source is None else source
 		token = validate_bridge_token(source.get("CODEX_BRIDGE_TOKEN", ""))
-		model = source.get("CODEX_BRIDGE_MODEL", "gpt-5.6-luna").strip()
+		model = source.get("CODEX_BRIDGE_MODEL", "gpt-6-luna").strip()
 		host = source.get("CODEX_BRIDGE_HOST", "0.0.0.0").strip()
 		try:
 			port = int(source.get("CODEX_BRIDGE_PORT", "8787"))
@@ -168,7 +166,7 @@ class BridgeConfig:
 			raise ValueError("CODEX_BRIDGE_HOST is required")
 		if not 1 <= port <= 65535:
 			raise ValueError("CODEX_BRIDGE_PORT must be between 1 and 65535")
-		if timeout_seconds <= 0:
+		if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
 			raise ValueError("CODEX_BRIDGE_TIMEOUT_SECONDS must be positive")
 		return cls(
 			token=token,
@@ -243,11 +241,9 @@ class CodexRuntime:
 		codex: Any,
 		*,
 		workspace: str = "/workspace",
-		interrupt_grace_seconds: float = 5,
 	):
 		self._codex = codex
 		self.workspace = workspace
-		self.interrupt_grace_seconds = interrupt_grace_seconds
 		self._available = True
 
 	@classmethod
@@ -273,6 +269,16 @@ class CodexRuntime:
 		if not self._available:
 			raise BridgeRuntimeError("Codex runtime is unavailable")
 
+	@property
+	def available(self) -> bool:
+		return self._available
+
+	def _runtime_error(self, error: Exception) -> Exception:
+		mapped = _map_runtime_error(error)
+		if isinstance(mapped, BridgeRuntimeError):
+			self.close()
+		return mapped
+
 	def close(self) -> None:
 		if self._available:
 			self._available = False
@@ -287,7 +293,7 @@ class CodexRuntime:
 		try:
 			account_wrapper = self._codex.account(refresh_token=True).account
 		except Exception as error:
-			raise _map_runtime_error(error) from error
+			raise self._runtime_error(error) from error
 		if account_wrapper is None:
 			raise BridgeAuthError("Codex must be authenticated with ChatGPT")
 		account = account_wrapper.root
@@ -301,7 +307,7 @@ class CodexRuntime:
 		try:
 			models = self._codex.models(include_hidden=False).data
 		except Exception as error:
-			raise _map_runtime_error(error) from error
+			raise self._runtime_error(error) from error
 		return any(entry.id == model and not entry.hidden for entry in models)
 
 	def run(
@@ -311,7 +317,8 @@ class CodexRuntime:
 		timeout_seconds: float,
 	) -> RuntimeResponse:
 		self._require_available()
-		try:
+
+		def run_turn():
 			thread = self._codex.thread_start(
 				approval_mode=ApprovalMode.deny_all,
 				base_instructions=BASE_INSTRUCTIONS,
@@ -323,33 +330,28 @@ class CodexRuntime:
 				sandbox=Sandbox.read_only,
 				service_name="supermemory_codex_bridge",
 			)
+			self._require_available()
 			handle = thread.turn(
 				turn.prompt,
 				approval_mode=ApprovalMode.deny_all,
 				output_schema=turn.output_schema,
 				sandbox=Sandbox.read_only,
 			)
-		except Exception as error:
-			raise _map_runtime_error(error) from error
+			self._require_available()
+			return handle.run()
 
 		executor = ThreadPoolExecutor(max_workers=1)
-		future = executor.submit(handle.run)
+		future = executor.submit(run_turn)
 		try:
 			result = future.result(timeout=timeout_seconds)
 		except FutureTimeoutError as error:
-			try:
-				handle.interrupt()
-			except Exception:
-				pass
-			try:
-				future.result(timeout=self.interrupt_grace_seconds)
-			except Exception:
-				self.close()
+			# Retire the ephemeral runtime: setup and interruption can block too.
+			self.close()
 			raise BridgeTimeoutError(
 				f"Codex turn timed out after {timeout_seconds:g} seconds"
 			) from error
 		except Exception as error:
-			raise _map_runtime_error(error) from error
+			raise self._runtime_error(error) from error
 		finally:
 			executor.shutdown(wait=False, cancel_futures=True)
 
@@ -423,6 +425,14 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
 	def log_message(self, _format, *_args):
 		return
+
+	def finish(self) -> None:
+		try:
+			super().finish()
+		finally:
+			if not self.application.runtime.available:
+				# Called on a request thread, after flushing its error response.
+				self.server.shutdown()
 
 	def _send_json(
 		self,
@@ -536,7 +546,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
 			return None, content_length
 		try:
 			body = json.loads(self.rfile.read(content_length) or b"{}")
-		except json.JSONDecodeError:
+		except (json.JSONDecodeError, UnicodeDecodeError):
 			self._send_error(400, "invalid JSON body", "invalid_request")
 			return None, content_length
 		if not isinstance(body, dict):

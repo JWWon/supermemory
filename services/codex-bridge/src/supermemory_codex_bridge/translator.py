@@ -67,7 +67,7 @@ def _validate_messages(
 		if not isinstance(message, dict):
 			raise BridgeProtocolError("each message must be an object")
 		role = message.get("role")
-		if role not in ALLOWED_ROLES:
+		if not isinstance(role, str) or role not in ALLOWED_ROLES:
 			raise BridgeProtocolError(f"unsupported message role: {role}")
 		allowed_fields = {"role", "content"}
 		if role == "assistant":
@@ -104,7 +104,7 @@ def _validate_messages(
 				if not isinstance(function, dict) or set(function) != {"name", "arguments"}:
 					raise BridgeProtocolError("malformed assistant tool function")
 				name = function.get("name")
-				if name not in tool_names:
+				if not isinstance(name, str) or name not in tool_names:
 					raise BridgeProtocolError(f"unknown assistant tool: {name}")
 				try:
 					arguments = json.loads(function.get("arguments", ""))
@@ -118,7 +118,8 @@ def _validate_messages(
 		if role == "tool":
 			tool_call_id = message.get("tool_call_id")
 			if (
-				tool_call_id not in known_call_ids
+				not isinstance(tool_call_id, str)
+				or tool_call_id not in known_call_ids
 				or tool_call_id in seen_result_ids
 			):
 				raise BridgeProtocolError(
@@ -194,15 +195,15 @@ def build_codex_turn(
 		raise BridgeProtocolError(
 			f"unsupported request fields: {', '.join(sorted(unknown_fields))}"
 		)
-	if request.get("stream", False):
+	if request.get("stream", False) is not False:
 		raise BridgeProtocolError("streaming is not supported")
-	if request.get("n", 1) != 1:
+	if type(request.get("n", 1)) is not int or request.get("n", 1) != 1:
 		raise BridgeProtocolError("only n=1 is supported")
 
 	tool_schemas = _extract_tools(request.get("tools"))
 	messages = _validate_messages(request.get("messages"), set(tool_schemas))
 	tool_choice = request.get("tool_choice", "auto")
-	if tool_choice not in {"auto", "none", "required"}:
+	if not isinstance(tool_choice, str) or tool_choice not in {"auto", "none", "required"}:
 		raise BridgeProtocolError("only auto, none, and required tool_choice are supported")
 
 	response_format = request.get("response_format")

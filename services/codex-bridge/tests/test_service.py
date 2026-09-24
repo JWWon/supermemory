@@ -2,6 +2,7 @@ import http.client
 import json
 import os
 import tempfile
+import time
 from types import SimpleNamespace
 import threading
 import unittest
@@ -177,6 +178,13 @@ class CodexEnvironmentTest(unittest.TestCase):
 		self.assertEqual(config.timeout_seconds, 42)
 		self.assertEqual(config.model, "gpt-5.6-luna")
 
+	def test_default_model_and_finite_timeout(self):
+		environment = {"CODEX_BRIDGE_TOKEN": "a" * 64}
+		self.assertEqual(BridgeConfig.from_environment(environment).model, "gpt-6-luna")
+		for timeout in ("nan", "inf", "0", "-1"):
+			with self.subTest(timeout=timeout), self.assertRaises(ValueError):
+				BridgeConfig.from_environment({**environment, "CODEX_BRIDGE_TIMEOUT_SECONDS": timeout})
+
 	def test_resolves_existing_configured_workspace(self):
 		with tempfile.TemporaryDirectory() as workspace:
 			self.assertEqual(
@@ -211,19 +219,20 @@ class CodexRuntimeTest(unittest.TestCase):
 		self.assertEqual(config.env, environment)
 		self.assertEqual(config.config_overrides, CODEX_CONFIG_OVERRIDES)
 		for feature in (
-			"apply_patch_freeform",
 			"deferred_executor",
-			"js_repl",
-			"search_tool",
+			"shell_tool",
+			"sleep_tool",
 			"standalone_web_search",
-			"web_search_cached",
-			"web_search_request",
 		):
 			self.assertIn(
 				f"features.{feature}=false",
 				config.config_overrides,
 			)
 		self.assertIn('web_search="disabled"', config.config_overrides)
+		self.assertIn('model_reasoning_effort="high"', config.config_overrides)
+		self.assertIn('agents.enabled=false', config.config_overrides)
+		self.assertIn('tools.experimental_request_user_input.enabled=false', config.config_overrides)
+		self.assertIn('features.code_mode_host.disable_in_process_fallback=true', config.config_overrides)
 		runtime.close()
 
 	def test_requires_chatgpt_account(self):
@@ -270,26 +279,43 @@ class CodexRuntimeTest(unittest.TestCase):
 			},
 		)
 
-	def test_interrupts_turn_on_timeout(self):
+	def test_retires_runtime_on_timeout(self):
 		handle = FakeHandle(wait_for_interrupt=True)
-		runtime = CodexRuntime(FakeCodex(handle=handle))
-
-		with self.assertRaisesRegex(BridgeTimeoutError, "timed out"):
-			runtime.run(sample_turn(), timeout_seconds=0.01)
-
-		self.assertTrue(handle.interrupted)
-
-	def test_closes_runtime_when_interruption_does_not_settle(self):
-		handle = FakeHandle(wait_for_interrupt=True, ignore_interrupt=True)
 		fake = FakeCodex(handle=handle)
-		runtime = CodexRuntime(fake, interrupt_grace_seconds=0.01)
+		runtime = CodexRuntime(fake)
 
 		with self.assertRaisesRegex(BridgeTimeoutError, "timed out"):
 			runtime.run(sample_turn(), timeout_seconds=0.01)
 
 		self.assertTrue(fake.closed)
-		with self.assertRaisesRegex(BridgeRuntimeError, "unavailable"):
-			runtime.run(sample_turn(), timeout_seconds=1)
+		self.assertFalse(runtime.available)
+
+	def test_deadline_includes_thread_and_turn_setup(self):
+		for phase in ("thread_start", "turn"):
+			with self.subTest(phase=phase):
+				fake = FakeCodex()
+				runtime = CodexRuntime(fake)
+				owner = fake if phase == "thread_start" else fake.thread
+				original = getattr(owner, phase)
+				def blocked(*args, **kwargs):
+					fake.thread.handle.done.wait()
+					return original(*args, **kwargs)
+				with patch.object(owner, phase, side_effect=blocked):
+					started = time.monotonic()
+					with self.assertRaises(BridgeTimeoutError):
+						runtime.run(sample_turn(), timeout_seconds=0.02)
+					self.assertLess(time.monotonic() - started, 1)
+				self.assertTrue(fake.closed)
+				with self.assertRaisesRegex(BridgeRuntimeError, "unavailable"):
+					runtime.run(sample_turn(), timeout_seconds=1)
+
+	def test_sdk_transport_failure_retires_runtime(self):
+		fake = FakeCodex()
+		runtime = CodexRuntime(fake)
+		with patch.object(fake, "thread_start", side_effect=RuntimeError("transport closed")):
+			with self.assertRaises(BridgeRuntimeError):
+				runtime.run(sample_turn(), timeout_seconds=1)
+		self.assertFalse(runtime.available)
 
 	def test_rejects_any_native_tool_item(self):
 		result = SimpleNamespace(
@@ -335,6 +361,7 @@ class CodexRuntimeTest(unittest.TestCase):
 
 class FakeBridgeRuntime:
 	def __init__(self):
+		self.available = True
 		self.error = None
 		self.text_override = None
 		self.run_calls = 0
@@ -476,6 +503,20 @@ class BridgeHTTPTest(unittest.TestCase):
 		self.assertEqual(streaming.status, 400)
 		self.assertEqual(streaming_body["error"]["code"], "invalid_request")
 
+	def test_malformed_membership_fields_return_400(self):
+		for field in ("tool_choice", "role"):
+			for value in ({}, [], None):
+				with self.subTest(field=field, value=value):
+					body = self.summary_request()
+					if field == "role":
+						body["messages"][0][field] = value
+					else:
+						body[field] = value
+					response, payload = self.request("POST", "/v1/chat/completions", body=body, token=self.token)
+					self.assertEqual(response.status, 400)
+					self.assertEqual(payload["error"]["code"], "invalid_request")
+		self.assertEqual(self.runtime.run_calls, 0)
+
 	def test_rejects_oversized_request_before_reading_body(self):
 		connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=2)
 		connection.putrequest("POST", "/v1/chat/completions")
@@ -549,6 +590,32 @@ class BridgeHTTPTest(unittest.TestCase):
 		self.assertNotIn("Project Finch", joined)
 		self.assertNotIn(self.token, joined)
 		self.assertNotIn("Synthetic project workspace", joined)
+
+
+class FatalRuntimeHTTPTest(unittest.TestCase):
+	def test_sends_timeout_before_stopping_http_server(self):
+		runtime = CodexRuntime(FakeCodex(handle=FakeHandle(wait_for_interrupt=True)))
+		application = BridgeApplication(runtime=runtime, token="a" * 64,
+			model="gpt-5.6-luna", timeout_seconds=0.02)
+		server = create_server(application, "127.0.0.1", 0)
+		thread = threading.Thread(target=server.serve_forever, daemon=True)
+		thread.start()
+		try:
+			connection = http.client.HTTPConnection("127.0.0.1", server.server_address[1], timeout=2)
+			connection.request("POST", "/v1/chat/completions", json.dumps({
+				"model": "gpt-5.6-luna", "messages": [{"role": "user", "content": "Synthetic"}],
+				"response_format": {"type": "json_object"},
+			}), {"Authorization": "Bearer " + application.token, "Content-Type": "application/json"})
+			response = connection.getresponse()
+			self.assertEqual(response.status, 504)
+			self.assertEqual(json.loads(response.read())["error"]["code"], "timeout")
+			connection.close()
+			thread.join(timeout=2)
+			self.assertFalse(thread.is_alive())
+		finally:
+			server.shutdown()
+			server.server_close()
+			runtime.close()
 
 
 if __name__ == "__main__":

@@ -4,9 +4,9 @@ services:
     environment:
       OPENAI_BASE_URL: http://codex-bridge:8787/v1
       OPENAI_API_KEY: ${CODEX_BRIDGE_TOKEN:?set CODEX_BRIDGE_TOKEN in .env.codex}
-      OPENAI_MODEL: ${CODEX_BRIDGE_MODEL:-gpt-5.6-luna}
-      OPENAI_FAST_MODEL: ${CODEX_BRIDGE_MODEL:-gpt-5.6-luna}
-      OPENAI_TEXT_MODEL: ${CODEX_BRIDGE_MODEL:-gpt-5.6-luna}
+      OPENAI_MODEL: ${CODEX_BRIDGE_MODEL:-gpt-6-luna}
+      OPENAI_FAST_MODEL: ${CODEX_BRIDGE_MODEL:-gpt-6-luna}
+      OPENAI_TEXT_MODEL: ${CODEX_BRIDGE_MODEL:-gpt-6-luna}
       SUPERMEMORY_INGEST_CONCURRENCY: "1"
     depends_on:
       codex-bridge:
@@ -27,7 +27,7 @@ services:
     environment:
       CODEX_HOME: /var/lib/codex
       CODEX_BRIDGE_TOKEN: ${CODEX_BRIDGE_TOKEN:?set CODEX_BRIDGE_TOKEN in .env.codex}
-      CODEX_BRIDGE_MODEL: ${CODEX_BRIDGE_MODEL:-gpt-5.6-luna}
+      CODEX_BRIDGE_MODEL: ${CODEX_BRIDGE_MODEL:-gpt-6-luna}
       CODEX_BRIDGE_TIMEOUT_SECONDS: "240"
       CODEX_BRIDGE_WORKSPACE: /workspace
     volumes:

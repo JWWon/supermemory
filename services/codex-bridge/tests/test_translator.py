@@ -116,6 +116,20 @@ class BuildCodexTurnTest(unittest.TestCase):
 		with self.assertRaisesRegex(BridgeProtocolError, "arguments"):
 			build_codex_turn(request, "gpt-5.6-luna")
 
+	def test_rejects_non_string_roles_tool_names_and_result_ids(self):
+		for field in ("role", "name", "tool_call_id"):
+			for value in ({}, [], None):
+				with self.subTest(field=field, value=value):
+					request = copy.deepcopy(captured_requests()[2]["body"])
+					if field == "role":
+						request["messages"][0][field] = value
+					elif field == "name":
+						request["messages"][2]["tool_calls"][0]["function"][field] = value
+					else:
+						request["messages"][3][field] = value
+					with self.assertRaises(BridgeProtocolError):
+						build_codex_turn(request, "gpt-6-luna")
+
 
 class ParseCodexResultTest(unittest.TestCase):
 	def setUp(self):
