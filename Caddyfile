@@ -1,4 +1,8 @@
 :8443 {
+  @mcp path /mcp /mcp/
+  handle @mcp {
+    reverse_proxy mcp:8788
+  }
   handle_path /media/* {
     root * /srv/media
     file_server browse

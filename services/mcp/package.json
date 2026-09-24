@@ -1,0 +1,9 @@
+{
+  "name": "supermemory-local-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {"start": "bun run server.ts", "test": "bun test", "verify": "bun run verify.ts"},
+  "dependencies": {"@modelcontextprotocol/server": "2.0.0", "zod": "4.4.3"},
+  "devDependencies": {"@modelcontextprotocol/client": "2.0.0"}
+}
