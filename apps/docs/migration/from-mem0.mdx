@@ -6,7 +6,7 @@ sidebarTitle: "From Mem0"
 
 Migrating from Mem0 to Supermemory is straightforward. This guide walks you through exporting your memories from Mem0 and importing them into Supermemory.
 
-## Why Migrate to Supermemory?
+## Why migrate to Supermemory?
 
 Supermemory offers enhanced capabilities over Mem0:
 - **Knowledge graph** architecture for better context relationships
@@ -14,7 +14,7 @@ Supermemory offers enhanced capabilities over Mem0:
 - **Generous free tier** (100k tokens) with affordable pricing
 - **Multiple integration options** (API, MCP, SDKs)
 
-## Quick Migration (All-in-One)
+## Quick migration (all-in-one)
 
 Complete migration in one script:
 
@@ -36,22 +36,19 @@ data = mem0.get_memory_export(memory_export_id=export["id"])
 supermemory = Supermemory(api_key="your_supermemory_api_key")
 for memory in data["memories"]:
     if memory.get("content"):
-        supermemory.memories.add(
-            content=memory["content"],
-            container_tags=["imported_from_mem0"]
-        )
+        supermemory.add("imported_from_mem0", content=memory["content"])
         print(f"✅ {memory['content'][:50]}...")
 
 print("Migration complete!")
 ```
 
-## Step-by-Step Migration
+## Step-by-step migration
 
 <Steps>
   <Step title="Export from Mem0">
     Mem0 provides two ways to export your memories:
 
-    ### Option 1: Export via Dashboard (Recommended)
+    ### Option 1: Export via dashboard (recommended)
     1. Log into your [Mem0 dashboard](https://app.mem0.ai)
     2. Navigate to the export section
     3. Download your memories as JSON
@@ -103,7 +100,7 @@ print("Migration complete!")
     ```
   </Step>
 
-  <Step title="Set Up Supermemory">
+  <Step title="Set up Supermemory">
     Create your Supermemory account and get your API key:
 
     1. Sign up at [console.supermemory.ai](https://console.supermemory.ai)
@@ -141,8 +138,8 @@ print("Migration complete!")
         # Import to Supermemory
         try:
             result = client.add(
+                "imported_from_mem0",
                 content=content,
-                container_tags=["imported_from_mem0"],
                 metadata={
                     "source": "mem0",
                     "created_at": memory.get("created_at"),
@@ -158,11 +155,11 @@ print("Migration complete!")
   </Step>
 </Steps>
 
-## API Migration Reference
+## API migration reference
 
 Here's how common Mem0 operations map to Supermemory:
 
-### Adding Memories
+### Adding memories
 
 <CodeGroup>
 
@@ -176,19 +173,18 @@ client.add(
 )
 ```
 
-```python Supermemory
-from supermemory import Supermemory
+```typescript Supermemory
+import { Supermemory } from "supermemory";
 
-client = Supermemory(api_key="...")
-client.add(
-    content="User prefers dark mode",
-    container_tags=["user_alice"]
-)
+const client = new Supermemory({ apiKey: "..." });
+await client.add("user_alice", {
+  content: "User prefers dark mode",
+});
 ```
 
 </CodeGroup>
 
-### Searching Memories
+### Searching memories
 
 <CodeGroup>
 
@@ -199,16 +195,16 @@ results = client.search(
 )
 ```
 
-```python Supermemory
-results = client.search.memories(
-    q="user preferences",
-    container_tag="user_alice"
-)
+```typescript Supermemory
+const { results } = await client.search("user_alice", {
+  query: "user preferences",
+  searchMode: "memories",
+});
 ```
 
 </CodeGroup>
 
-### Getting All Memories
+### Getting all memories
 
 <CodeGroup>
 
@@ -218,16 +214,15 @@ memories = client.get_all(
 )
 ```
 
-```python Supermemory
-memories = client.documents.list(
-    container_tags=["user_alice"],
-    limit=100
-)
+```typescript Supermemory
+const { memories } = await client.list("user_alice", "memories", {
+  limit: 100,
+});
 ```
 
 </CodeGroup>
 
-### Deleting Memories
+### Deleting memories
 
 <CodeGroup>
 
@@ -235,8 +230,10 @@ memories = client.documents.list(
 client.delete(memory_id="mem_123")
 ```
 
-```python Supermemory
-client.documents.delete("mem_123")
+```typescript Supermemory
+await client.documents.delete("user_alice", {
+  ids: ["mem_123"],
+});
 ```
 
 </CodeGroup>
@@ -245,7 +242,7 @@ client.documents.delete("mem_123")
 For enterprise migrations, [contact us](mailto:support@supermemory.ai) for assistance.
 </Note>
 
-## Next Steps
+## Next steps
 
 1. [Explore](/concepts/how-it-works) how Supermemory works
 2. Read the [quickstart](/quickstart) and add and retrieve your first memories

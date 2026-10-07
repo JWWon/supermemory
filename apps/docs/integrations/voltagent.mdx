@@ -2,16 +2,16 @@
 title: "VoltAgent"
 sidebarTitle: "VoltAgent"
 description: "Integrate Supermemory with VoltAgent for long-term memory in AI agents"
-icon: "bolt"
+icon: "/icons/hugeicons/flash.svg"
 ---
+
+import MigrateCli from "/snippets/migrate-cli.mdx";
 
 Supermemory integrates with [VoltAgent](https://github.com/VoltAgent/voltagent), providing long-term memory capabilities for AI agents. Your VoltAgent applications will remember past conversations and provide personalized responses based on user history.
 
-<Note>
-  Migrating to v2 from 1.4.x? Check the [migration guide](/migration/tools-v2-upgrade).
-</Note>
+<MigrateCli legacy="@supermemory/tools 2.x" guideHref="/migration/tools-v3-upgrade" guideLabel="3.0 upgrade guide" />
 
-<Card title="@supermemory/tools on npm" icon="npm" href="https://www.npmjs.com/package/@supermemory/tools">
+<Card title="@supermemory/tools on npm" icon="/icons/hugeicons/package.svg" href="https://www.npmjs.com/package/@supermemory/tools">
     Check out the NPM page for more details
 </Card>
 
@@ -29,7 +29,7 @@ export SUPERMEMORY_API_KEY=your_supermemory_api_key
 
 You can obtain an API key from [console.supermemory.ai](https://console.supermemory.ai).
 
-## Quick Start
+## Quick start
 
 Supermemory provides a `withSupermemory` wrapper that enhances any VoltAgent agent config with automatic memory retrieval and storage:
 
@@ -45,8 +45,8 @@ const configWithMemory = withSupermemory({
     instructions: "You are a helpful assistant.",
     model: openai("gpt-4o"),
   },
-  containerTag: "user-123",
-  customId: "conversation-123",
+  namespace: "user-123",
+  id: "conversation-123",
 })
 
 const agent = new Agent(configWithMemory)
@@ -65,29 +65,29 @@ const result = await agent.generateText("What's my name?")
       instructions: "You are a helpful assistant.",
       model: openai("gpt-4o"),
     },
-    containerTag: "user-123",
-    customId: "conversation-123",
+    namespace: "user-123",
+    id: "conversation-123",
     addMemory: "never",
   })
   ```
 </Note>
 
-## How It Works
+## How it works
 
 When integrated with VoltAgent, Supermemory hooks into two lifecycle events:
 
-### 1. Memory Retrieval (onPrepareMessages)
+### 1. Memory retrieval (onPrepareMessages)
 
 Before each LLM call, Supermemory automatically:
 - Extracts the user's latest message
-- Searches for relevant memories scoped to the `containerTag`
+- Searches for relevant memories scoped to the `namespace`
 - Injects retrieved memories into the system prompt
 
-### 2. Conversation Saving (onEnd)
+### 2. Conversation saving (onEnd)
 
-After each agent response, the conversation is saved to Supermemory for future retrieval. This requires a `customId` to be set.
+After each agent response, the conversation is saved to Supermemory for future retrieval. This requires a `id` to be set.
 
-## Memory Modes
+## Memory modes
 
 | Mode        | Description                                 | Use Case                       |
 | ----------- | ------------------------------------------- | ------------------------------ |
@@ -102,13 +102,13 @@ const configWithMemory = withSupermemory({
     instructions: "You are a helpful assistant.",
     model: openai("gpt-4o"),
   },
-  containerTag: "user-123",
-  customId: "conversation-123",
+  namespace: "user-123",
+  id: "conversation-123",
   mode: "full",
 })
 ```
 
-## Configuration Options
+## Configuration options
 
 ```typescript
 const configWithMemory = withSupermemory({
@@ -120,12 +120,12 @@ const configWithMemory = withSupermemory({
   },
 
   // Required
-  containerTag: "user-123",        // User/project ID for scoping memories
+  namespace: "user-123",        // User/project ID for scoping memories
 
   // Memory behavior
   mode: "full",                    // "profile" | "query" | "full"
   addMemory: "always",             // "always" | "never"
-  customId: "conv-456",            // Groups messages into a conversation
+  id: "conv-456",            // Groups messages into a conversation
 
   // Search tuning
   searchMode: "hybrid",            // "memories" | "documents" | "hybrid"
@@ -146,10 +146,10 @@ const configWithMemory = withSupermemory({
 | Parameter         | Type     | Default      | Description                                              |
 | ----------------- | -------- | ------------ | -------------------------------------------------------- |
 | `agentConfig`     | object   | **required** | VoltAgent agent configuration object                     |
-| `containerTag`    | string   | **required** | User/project ID for scoping memories                     |
+| `namespace`    | string   | **required** | User/project ID for scoping memories                     |
 | `mode`            | string   | `"profile"`  | Memory retrieval mode                                    |
 | `addMemory`       | string   | `"always"`   | Whether to save conversations after each response        |
-| `customId`        | string   | **required** | Custom ID to group messages into a conversation          |
+| `id`        | string   | **required** | Custom ID to group messages into a conversation          |
 | `searchMode`      | string   | —            | `"memories"`, `"documents"`, or `"hybrid"`               |
 | `threshold`       | number   | —            | Similarity threshold (0 = more results, 1 = more accurate) |
 | `limit`           | number   | —            | Maximum number of memory results (integer from 1 to 100) |
@@ -161,7 +161,7 @@ const configWithMemory = withSupermemory({
 
 When `threshold` or `limit` is omitted, the selected Supermemory backend route applies its own default. Set them explicitly when you need consistent search tuning across modes.
 
-## Search Modes
+## Search modes
 
 The `searchMode` option controls what type of results are searched:
 

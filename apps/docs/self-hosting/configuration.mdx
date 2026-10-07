@@ -1,8 +1,8 @@
 ---
-title: "Self-Hosting Configuration"
+title: "Self-hosting configuration"
 sidebarTitle: "Configuration"
 description: "Every environment variable the self-hosted server understands."
-icon: "settings"
+icon: "/icons/hugeicons/settings-01.svg"
 ---
 
 The self-hosted server aims for **zero configuration** — the only required input is one LLM provider key, which the first-boot wizard collects interactively (or set via env var for non-interactive deployments). Embeddings default to local English; you can pick another provider in the optional wizard step or via env. Everything else below is opt-in.
@@ -14,7 +14,10 @@ The installer writes API keys to `~/.supermemory/env`, which is loaded on every 
 | Variable | Purpose | Default |
 |---|---|---|
 | `PORT` (or `SUPERMEMORY_PORT`) | HTTP listen port | `6767` |
+| `SUPERMEMORY_HOST` | In the next release, controls the listen address; not supported by v0.0.8 | `127.0.0.1` in the next release |
 | `SUPERMEMORY_DATA_DIR` | Where the graph engine's data, auth secret, and model cache live | `./.supermemory` |
+
+**The currently published v0.0.8 binds all interfaces and its implicit local authentication is unsafe when exposed to untrusted networks. Do not expose it; restrict access with a firewall or run it on an isolated machine.** The next release will bind loopback and require the generated key for every API request, including requests from localhost. Its browser welcome page will no longer reveal the key; enter the key printed at first boot in the Memory tab. If you later expose that release through a reverse proxy, protect the endpoint with TLS and access controls.
 
 ## LLM providers
 
@@ -65,7 +68,7 @@ Nothing to configure. Uploaded files (PDFs, images) are stored on local disk ins
 
 By default, vectors are computed locally with `Xenova/bge-base-en-v1.5` (768d) — no embedding API key. On interactive first boot you can pick a different provider after the LLM key step; for Docker/CI set env vars instead.
 
-Full provider table, multilingual guidance, remote examples (OpenAI / Gemini / Ollama), and the re-ingestion / dimension-lock warning: **[Embeddings (self-hosted)](/self-hosting/embeddings)**.
+The full provider table, multilingual guidance, remote examples (OpenAI, Gemini, Ollama) and the dimension-lock warning are in [embeddings for self-hosting](/self-hosting/embeddings).
 
 | Variable | Purpose | Default |
 |---|---|---|
@@ -91,7 +94,7 @@ Local embeddings are prewarmed at startup with conservative defaults — one wor
 The server manages memory for you and separates the two kinds of work you send it:
 
 - **Searches are always served immediately.** They never wait behind ingestion, regardless of how much is queued.
-- **Adds are accepted instantly but processed through a queue.** A `POST /v3/documents` call returns in milliseconds with status `queued`; extraction, embedding, and indexing happen in the background at a controlled pace.
+- **Adds are accepted instantly but processed through a queue.** A `POST /ns/{namespace}/document` call returns in milliseconds with status `queued`; extraction, embedding, and indexing happen in the background at a controlled pace.
 
 Ingestion may grow the server's memory usage by at most `SUPERMEMORY_EMBEDDING_RAM_LIMIT` (default **1 GB**) above its post-boot baseline. Past that, new documents simply wait in the queue until memory drops back under the limit — nothing is dropped, ingestion just slows down. The limit is measured above the boot baseline because the built-in local embeddings and storage engine have a fixed footprint that exists before any document is processed.
 
@@ -118,11 +121,7 @@ Raise the limit and concurrency on machines with spare RAM for faster bulk impor
 
 ## Telemetry
 
-The self-hosted binary sends no analytics — there is nothing to opt out of. The only related switch:
-
-| Variable | Purpose | Default |
-|---|---|---|
-| `SUPERMEMORY_DISABLE_TELEMETRY` | Set to `1` to also disable internal AI SDK telemetry instrumentation | unset |
+Supermemory collects telemetry. You can disable it with `SUPERMEMORY_DISABLE_TELEMETRY=1`.
 
 ## Platform-only features
 

@@ -1,0 +1,116 @@
+v5 searches one namespace, defaults to hybrid recall, and takes every option in one typed JSON body. Search has no query-string parameters.
+
+### Request mapping
+
+| Legacy | v5 |
+| --- | --- |
+| `containerTag` | `/ns/{namespace}` |
+| body `q` | body `query` |
+| body `limit` | body `limit` |
+| `searchMode: "documents"` | `searchMode: "chunks"` |
+| omitted search mode | `searchMode: "hybrid"` |
+| `filters` | singular `filter` |
+| `include.documents` or `.summaries` | `include.documents` |
+| `include.relatedMemories` | `include.related` |
+| `include.forgottenMemories` | `include.forgotten` |
+| `rerank: true` / `aggregate: true` | `rerank: "order"` / `"aggregate"` |
+
+<CodeGroup>
+```bash Legacy
+POST /v4/search
+{"q":"What did the user decide?","containerTag":"user_1","limit":10,"searchMode":"memories"}
+```
+
+```bash v5
+POST /ns/user_1/search
+{"query":"What did the user decide?","limit":10,"searchMode":"memories","threshold":0.6,"rewriteQuery":false}
+```
+</CodeGroup>
+
+### With the SDK
+
+<CodeGroup>
+```ts Legacy
+const memories = await client.search.memories({
+  q: "What did the user decide?",
+  containerTag: "user_1",
+  limit: 10,
+})
+
+const docs = await client.search.execute({
+  q: "launch plan",
+  containerTags: ["user_1"],
+})
+```
+
+```ts v5
+const memories = await supermemory.search("user_1", {
+  query: "What did the user decide?",
+  threshold: 0.6,
+  rewriteQuery: false,
+  searchMode: "memories",
+  limit: 10,
+})
+
+const chunks = await supermemory.search("user_1", {
+  query: "launch plan",
+  searchMode: "chunks",
+})
+
+const hybrid = await supermemory.search("user_1", {
+  query: "launch plan",
+})
+```
+</CodeGroup>
+
+`query`, `searchMode`, `limit`, `threshold`, `filter`, `include`, `rerank`, and `rewriteQuery` all go in one object (the JSON body over HTTP). Omitting `searchMode` gives `hybrid`.
+
+### Changed defaults
+
+| Setting | v4 | v5 |
+| --- | --- | --- |
+| Search mode | `memories` | `hybrid` |
+| Similarity threshold | `0.6` | `0.3` |
+| Reranking | Disabled | `rerank: "none"` |
+| Query rewriting | Disabled | `false` |
+
+Set mode and threshold explicitly while comparing versions. After parity testing, remove them only if you want the broader v5 hybrid defaults.
+
+### Search modes
+
+| Mode | Returns |
+| --- | --- |
+| `memories` | Formed memories only |
+| `chunks` | Source chunks only |
+| `hybrid` | Both result types in one ranked list |
+
+Legacy `include.chunks` has no v5 equivalent. Choose `chunks` or `hybrid` instead.
+
+### Included context and ranking
+
+`include` is an object of booleans in the body, e.g. `"include": {"documents": true, "related": true}`. Each flag defaults to `false`.
+
+- `include.documents` adds the most relevant source document to each result.
+- `include.related` adds parent, child, and sibling memories. Related memories come only from the same namespace and must match the request's `filter`, so they never surface content the search itself would exclude.
+- `include.forgotten` lets forgotten and expired memories appear in results, including as primary results.
+- `rerank` accepts `none`, `order`, or `aggregate`; `rewriteQuery` controls retrieval-oriented query rewriting.
+
+### Response mapping
+
+| Legacy reader | v5 reader |
+| --- | --- |
+| Result array | `results` |
+| Timing | `searchTime` |
+| Source expansion | `result.included.document`, with timestamps under its `system` |
+| Related context | `result.included.related.{parents,children,siblings}`, each with its memory `id` |
+| Lifecycle fields | `result.system` |
+| Version and inference flags | `result.isLatest`, `result.isInference` |
+
+Each primary result contains either `memory`, `chunk`, or both only if the contract allows it. Branch on field presence rather than assuming one result shape.
+
+### Verification
+
+- Compare IDs using explicit v4-equivalent defaults, then test v5 hybrid behavior separately.
+- Cover all three modes, thresholds at `0` and `1`, each rerank option, and query rewriting.
+- Cover every include alone and in combination, including empty results.
+- Verify filters, namespace isolation, result limits, and invalid body/query placement.

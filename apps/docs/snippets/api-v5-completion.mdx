@@ -1,0 +1,7 @@
+## Operations without a direct replacement
+
+- Direct memory creation and version updates: ingest or replace a source document instead.
+- Organization bucket suggestion and organization reset: not part of the v5 public surface.
+- Connector resource listing and hosted pickers from `/v3/connections`: use `supermemory.connectors.get` with `include: ["syncs", "picker"]` instead. Connector create, list, get, update, delete, and sync all have v5 routes under `/ns/{namespace}/connectors`.
+
+Use the [v5 reference](https://api.supermemory.ai/v5/reference) for the stable v5 API. [`/reference`](https://api.supermemory.ai/reference) always points to the latest public version.

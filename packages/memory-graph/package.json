@@ -1,6 +1,6 @@
 {
   "name": "@supermemory/memory-graph",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Interactive graph visualization component for Supermemory - visualize and explore your memory connections",
   "type": "module",
   "main": "./src/index.tsx",
@@ -60,7 +60,7 @@
     "@vitejs/plugin-react": "^5.1.0",
     "happy-dom": "^20.9.0",
     "typescript": "^5.9.3",
-    "vite": "^7.2.1",
-    "vitest": "^3.2.4"
+    "vite": "7.3.5",
+    "vitest": "3.2.6"
   }
 }
