@@ -49,6 +49,25 @@ Runtime configuration:
 - `SUPERMEMORY_API_URL`: internal REST base URL, normally `http://server:6767`.
 - `MCP_PUBLIC_URL`: expected public MCP URL, used for Host/Origin validation.
 - `HOST` / `PORT`: local bind address; standalone defaults to loopback / 8788.
+- `RERANK_URL` / `RERANK_MODEL`: optional reranker for `search_memory`, normally
+  the host's oMLX `http://host.docker.internal:11434/v1/rerank` with
+  `bge-reranker-v2-m3`. Remove `RERANK_URL` to return plain search.
+
+### Reranked search
+
+With a reranker configured, `search_memory` asks Supermemory for up to 30
+candidates at similarity 0.3, scores them with the cross-encoder, drops scores
+below 0.01, and returns the top `limit` with a `rerankScore` on each result and
+`reranked: true`. If the reranker fails or takes longer than 8 seconds, it
+returns what plain search would have (similarity 0.6 or higher, search order)
+with `reranked: false`. Memory text goes only to the configured reranker; the
+Supermemory key never does.
+
+Calibrated on 520 Korean and English questions against the personal store:
+top-1 recall rose from 57.1% to 71.9% and top-10 from 86.5% to 93.5%, and the
+0.01 floor never removed a correct memory. Reranking adds about 0.7 seconds per
+search (about 1.75 seconds when the model has to load first). The official
+hooks' automatic recall does not use this tool and is unchanged.
 
 Requests require the existing `sm_...` Supermemory API key. Keys are forwarded
 only to the fixed first-party API, never to URLs supplied by a tool call;

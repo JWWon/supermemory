@@ -13,7 +13,11 @@ const backend = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request)
   if (path === "/v3/session") return Response.json({ user: { id: "user", name: "Test" },
     org: { id: "org", name: "Test" }, session: { token: "DO_NOT_EXPOSE" } });
   if (path === "/v3/container-tags/list") return Response.json([{ containerTag: "personal", name: "Personal" }]);
-  if (path === "/v4/search") return Response.json({ results: [{ id: "memory", memory: "Synthetic indigo fact" }], total: 1 });
+  if (path === "/v4/search") return Response.json({ results: [
+    { id: "memory", memory: "Synthetic indigo fact", similarity: 0.9 },
+    { id: "violet", memory: "Synthetic violet fact", similarity: 0.7 },
+    { id: "noise", memory: "Unrelated note", similarity: 0.4 },
+  ], total: 3 });
   if (path === "/v4/profile") return Response.json({ profile: { static: ["Synthetic fact"], dynamic: [] } });
   if (path === "/v3/documents/list") return Response.json({ memories: [{ id: "doc" }], pagination: { currentPage: 1 } });
   if (path === "/v4/memories/list") return Response.json({ memoryEntries: [{ id: "memory" }], pagination: { currentPage: 1 } });
@@ -25,7 +29,44 @@ const backend = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request)
 const endpoint = Bun.serve({ hostname: "127.0.0.1", port: 0,
   fetch: createApp(backend.url.toString(), "http://127.0.0.1/mcp") });
 const url = new URL("/mcp", endpoint.url);
-afterAll(() => { endpoint.stop(true); backend.stop(true); });
+
+// Fake cross-encoder: prefers "violet", rejects "Unrelated", or fails when told to.
+let rerankerDown = false;
+const rerankCalls: { authorization: string | null; body: any }[] = [];
+const reranker = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
+  const body = await request.json();
+  rerankCalls.push({ authorization: request.headers.get("authorization"), body });
+  if (rerankerDown) return new Response("down", { status: 503 });
+  const score = (doc: string) => doc.includes("violet") ? 0.95 : doc.includes("indigo") ? 0.5 : 0.0001;
+  return Response.json({ results: body.documents.map((doc: string, index: number) => ({ index, relevance_score: score(doc) })) });
+} });
+const rerankingEndpoint = Bun.serve({ hostname: "127.0.0.1", port: 0,
+  fetch: createApp(backend.url.toString(), "http://127.0.0.1/mcp", new URL("/v1/rerank", reranker.url).toString()) });
+afterAll(() => { endpoint.stop(true); rerankingEndpoint.stop(true); reranker.stop(true); backend.stop(true); });
+
+test("search_memory reranks a wider candidate set and falls back to plain search", async () => {
+  const client = new Client({ name: "rerank-test", version: "1" });
+  await client.connect(new StreamableHTTPClientTransport(new URL("/mcp", rerankingEndpoint.url), {
+    requestInit: { headers: { Authorization: `Bearer ${key}` } },
+  }));
+  try {
+    const ranked = (await client.callTool({ name: "search_memory", arguments: { containerTag: "personal", query: "colors", limit: 5 } })).structuredContent as any;
+    expect(calls.at(-1)).toEqual({ method: "POST", path: "/v4/search",
+      body: { q: "colors", containerTag: "personal", limit: 30, searchMode: "memories", threshold: 0.3 } });
+    expect(ranked.reranked).toBe(true);
+    expect(ranked.results.map((r: any) => r.id)).toEqual(["violet", "memory"]);
+    expect(ranked.results[0].rerankScore).toBe(0.95);
+    expect(ranked.total).toBe(2);
+    expect(rerankCalls.at(-1)).toEqual({ authorization: null, body: {
+      model: "bge-reranker-v2-m3", query: "colors", return_documents: false,
+      documents: ["Synthetic indigo fact", "Synthetic violet fact", "Unrelated note"] } });
+
+    rerankerDown = true;
+    const plain = (await client.callTool({ name: "search_memory", arguments: { containerTag: "personal", query: "colors" } })).structuredContent as any;
+    expect(plain.reranked).toBe(false);
+    expect(plain.results.map((r: any) => r.id)).toEqual(["memory", "violet"]);
+  } finally { rerankerDown = false; await client.close(); }
+});
 
 for (const modern of [false, true]) {
   test(`${modern ? "2026" : "2025"} client: discovery, scoped reads, writes and errors`, async () => {

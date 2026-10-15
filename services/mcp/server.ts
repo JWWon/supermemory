@@ -11,11 +11,20 @@ const result = (value: Record<string, unknown>) => ({
   content: [{ type: "text" as const, text: JSON.stringify(value) }], structuredContent: value,
 });
 const readOnly = { readOnlyHint: true, destructiveHint: false, openWorldHint: false };
+// Rerank settings, calibrated on 520 questions against the personal memory store (see README).
+const RERANK_CANDIDATES = 30;
+const CANDIDATE_THRESHOLD = 0.3;
+const RERANK_FLOOR = 0.01;
+const RERANK_TIMEOUT_MS = 8000;
+const PLAIN_SEARCH_THRESHOLD = 0.6; // the server's /v4/search default, kept for the fallback
 
-export function createApp(apiUrl: string, publicUrl: string) {
+export function createApp(apiUrl: string, publicUrl: string, rerankUrl?: string, rerankModel = "bge-reranker-v2-m3") {
   const backend = new URL(apiUrl);
   if (!["http:", "https:"].includes(backend.protocol) || backend.username || backend.password)
     throw new Error("SUPERMEMORY_API_URL must be an HTTP(S) URL without credentials");
+  const reranker = rerankUrl ? new URL(rerankUrl) : undefined;
+  if (reranker && (!["http:", "https:"].includes(reranker.protocol) || reranker.username || reranker.password))
+    throw new Error("RERANK_URL must be an HTTP(S) URL without credentials");
   const publicOrigin = new URL(publicUrl);
   const hosts = [publicOrigin.hostname, "localhost", "127.0.0.1", "mcp"];
 
@@ -41,6 +50,21 @@ export function createApp(apiUrl: string, publicUrl: string) {
       });
       if (!response.ok) throw Object.assign(new Error(`Supermemory API returned HTTP ${response.status}`), { status: response.status });
       return response.status === 204 ? {} : await response.json();
+    };
+
+    // Local cross-encoder scores; never receives the Supermemory key.
+    const rerank = async (query: string, documents: string[]): Promise<number[]> => {
+      if (!reranker || documents.length === 0) return [];
+      const response = await fetch(reranker, {
+        method: "POST", redirect: "error", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: rerankModel, query, documents, return_documents: false }),
+        signal: AbortSignal.any([request.signal, AbortSignal.timeout(RERANK_TIMEOUT_MS)]),
+      });
+      if (!response.ok) throw new Error(`Reranker returned HTTP ${response.status}`);
+      const scores: number[] = new Array(documents.length).fill(Number.NaN);
+      for (const item of (await response.json()).results ?? []) scores[item.index] = Number(item.relevance_score);
+      if (scores.some(score => !Number.isFinite(score))) throw new Error("Reranker response incomplete");
+      return scores;
     };
 
     let session;
@@ -80,9 +104,30 @@ export function createApp(apiUrl: string, publicUrl: string) {
       server.registerTool("search_memory", {
         description: "Search memories in one explicit container. Use get_profile separately when profile context is needed.",
         inputSchema: z.object({ query: z.string().min(1).max(1000), containerTag, limit }), annotations: readOnly,
-      }, async ({ query, containerTag, limit }) => result({ containerTag,
-        ...await api("POST", "/v4/search", { q: query, containerTag, limit, searchMode: "memories" }),
-      }));
+      }, async ({ query, containerTag, limit }) => {
+        if (!reranker) return result({ containerTag,
+          ...await api("POST", "/v4/search", { q: query, containerTag, limit, searchMode: "memories" }),
+        });
+        // Fetch a wider, looser candidate set and let the cross-encoder order it.
+        const found = await api("POST", "/v4/search", {
+          q: query, containerTag, limit: Math.max(RERANK_CANDIDATES, limit), searchMode: "memories", threshold: CANDIDATE_THRESHOLD,
+        });
+        const candidates: Record<string, any>[] = found.results ?? [];
+        let results: Record<string, any>[];
+        let reranked = true;
+        try {
+          const scores = await rerank(query, candidates.map(item => String(item.memory ?? item.chunk ?? "")));
+          results = candidates.map((item, i) => ({ ...item, rerankScore: scores[i] }))
+            .filter(item => item.rerankScore >= RERANK_FLOOR)
+            .sort((a, b) => b.rerankScore - a.rerankScore) // stable: ties keep search order
+            .slice(0, limit);
+        } catch {
+          // Reranker down or slow: return what plain search would have returned.
+          reranked = false;
+          results = candidates.filter(item => (item.similarity ?? 0) >= PLAIN_SEARCH_THRESHOLD).slice(0, limit);
+        }
+        return result({ containerTag, ...found, results, total: results.length, reranked });
+      });
 
       server.registerTool("get_profile", {
         description: "Read stable and recent profile context from one explicit container.",
@@ -148,6 +193,7 @@ if (import.meta.main) {
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Invalid PORT");
   Bun.serve({ hostname: process.env.HOST ?? "127.0.0.1", port, maxRequestBodySize: 1024 * 1024,
     fetch: createApp(process.env.SUPERMEMORY_API_URL ?? "http://server:6767",
-      process.env.MCP_PUBLIC_URL ?? `http://localhost:${port}/mcp`) });
+      process.env.MCP_PUBLIC_URL ?? `http://localhost:${port}/mcp`,
+      process.env.RERANK_URL || undefined, process.env.RERANK_MODEL || undefined) });
   console.log(`Supermemory MCP listening on ${port}`);
 }

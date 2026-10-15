@@ -25,6 +25,10 @@ services:
     environment:
       SUPERMEMORY_API_URL: http://server:6767
       MCP_PUBLIC_URL: ${SUPERMEMORY_MCP_URL:-http://localhost:8443/mcp}
+      # search_memory reranks with the host's oMLX; remove RERANK_URL to return plain search.
+      RERANK_URL: http://host.docker.internal:11434/v1/rerank
+      RERANK_MODEL: bge-reranker-v2-m3
+    extra_hosts: ["host.docker.internal:host-gateway"]
     expose: ["8788"]
     depends_on:
       server:
