@@ -1,12 +1,16 @@
 name: supermemory
 services:
   server:
-    build: .
+    # Official image (replaces the old Dockerfile that downloaded the binary); same uid 10001 owns /data.
+    image: docker.io/supermemory/supermemory:${SUPERMEMORY_VERSION:-0.0.9}
+    init: true
+    stop_grace_period: 40s
     restart: unless-stopped
     ports: ["127.0.0.1:6767:6767"]
     volumes: ["sm-data:/data"]
     env_file: [.env]
-    mem_limit: 6g
+    # 0.0.9 peaked at 6.5 GB while opening the migrated store; 6g also OOM-killed 0.0.8 under load.
+    mem_limit: 8g
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:6767/v3/health"]
       interval: 30s
@@ -45,4 +49,7 @@ services:
     ports: ["127.0.0.1:8443:8443"]
     volumes: ["./Caddyfile:/etc/caddy/Caddyfile:ro", "./media:/srv/media:ro"]
 volumes:
+  # Migrated to 0.0.9 on 2026-10-17; the untouched 0.0.8 store stays in volume supermemory_sm-data for rollback.
   sm-data:
+    external: true
+    name: supermemory_sm-data-009
