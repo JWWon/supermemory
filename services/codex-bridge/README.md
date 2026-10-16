@@ -92,7 +92,7 @@ Stop the direct-mode server long enough to archive its data volume consistently:
 mkdir -p backups
 docker compose --env-file .env -f compose.yml stop server
 docker run --rm --read-only \
-  -v supermemory_sm-data:/data:ro \
+  -v supermemory_sm-data-009:/data:ro \
   -v "$PWD/backups:/backup" \
   caddy:2-alpine \
   tar -czf /backup/supermemory-sm-data-pre-codex.tar.gz -C /data .
