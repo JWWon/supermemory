@@ -1,8 +1,10 @@
 name: supermemory
 services:
   server:
-    # Official image (replaces the old Dockerfile that downloaded the binary); same uid 10001 owns /data.
-    image: docker.io/supermemory/supermemory:${SUPERMEMORY_VERSION:-0.0.9}
+    # Official 0.0.9 image plus a temporary snapshot patch (services/server); same uid 10001 owns /data.
+    # When a fixed release ships, drop `build` and set `image: docker.io/supermemory/supermemory:<version>`.
+    build: ./services/server
+    image: supermemory-server:0.0.9-snapshot-patch
     init: true
     stop_grace_period: 40s
     restart: unless-stopped
