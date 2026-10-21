@@ -416,5 +416,7 @@ Your app / AI tool
 ## Backups
 
 `~/.local/bin/supermemory-backup.sh`, daily 04:30 via `com.ryan.supermemory-backup`.
+It archives whichever volume the server mounts at `/data` and keeps only the two
+newest archives in `~/backups/supermemory`.
 It lives outside this repo because macOS TCC blocks launchd from executing or
 reading anything under `~/Documents` (exit 126, "Operation not permitted").
