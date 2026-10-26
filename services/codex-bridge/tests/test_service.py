@@ -14,6 +14,7 @@ from supermemory_codex_bridge.service import (
 	BridgeAuthError,
 	BridgeApplication,
 	BridgeConfig,
+	BridgePromptTooLargeError,
 	BridgeQuotaError,
 	BridgeRuntimeError,
 	BridgeTimeoutError,
@@ -330,6 +331,30 @@ class CodexRuntimeTest(unittest.TestCase):
 			runtime.run(sample_turn(), timeout_seconds=1)
 		self.assertTrue(fake.closed)
 
+	def test_context_compaction_rejects_the_request_but_keeps_the_runtime(self):
+		result = SimpleNamespace(
+			final_response='{"description":"summary of a truncated prompt"}',
+			items=[type("ContextCompactionThreadItem", (), {})()],
+			usage=None,
+		)
+		fake = FakeCodex(handle=FakeHandle(result=result))
+		runtime = CodexRuntime(fake)
+
+		with self.assertRaises(BridgePromptTooLargeError):
+			runtime.run(sample_turn(), timeout_seconds=1)
+		self.assertFalse(fake.closed)
+		self.assertTrue(runtime.available)
+
+	def test_input_over_codex_limit_rejects_the_request_but_keeps_the_runtime(self):
+		fake = FakeCodex()
+		runtime = CodexRuntime(fake)
+		error = RuntimeError("JSON-RPC error -32602: Input exceeds the maximum length of 1048576 characters.")
+		with patch.object(fake, "thread_start", side_effect=error):
+			with self.assertRaises(BridgePromptTooLargeError):
+				runtime.run(sample_turn(), timeout_seconds=1)
+		self.assertFalse(fake.closed)
+		self.assertTrue(runtime.available)
+
 	def test_retires_runtime_for_native_tool_without_final_response(self):
 		result = SimpleNamespace(
 			final_response=None,
@@ -551,6 +576,7 @@ class BridgeHTTPTest(unittest.TestCase):
 			(BridgeAuthError("auth"), 401),
 			(BridgeQuotaError("quota"), 429),
 			(BridgeRuntimeError("runtime"), 503),
+			(BridgePromptTooLargeError("too large"), 413),
 			(BridgeTimeoutError("timeout"), 504),
 		):
 			with self.subTest(error=type(error).__name__):

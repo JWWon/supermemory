@@ -120,6 +120,10 @@ class BridgeRuntimeError(RuntimeError):
 	pass
 
 
+class BridgePromptTooLargeError(RuntimeError):
+	pass
+
+
 class BridgeTimeoutError(TimeoutError):
 	pass
 
@@ -209,6 +213,9 @@ def resolve_workspace(source: Mapping[str, str] | None = None) -> str:
 
 def _map_runtime_error(error: Exception) -> Exception:
 	message = str(error).lower()
+	if "exceeds the maximum length" in message:
+		# Codex rejects the input cleanly (JSON-RPC -32602); the runtime stays healthy.
+		return BridgePromptTooLargeError("prompt exceeds the Codex input limit")
 	if any(
 		marker in message
 		for marker in (
@@ -275,6 +282,8 @@ class CodexRuntime:
 
 	def _runtime_error(self, error: Exception) -> Exception:
 		mapped = _map_runtime_error(error)
+		# The mapped error hides the cause; keep a short, content-free hint for diagnosis.
+		LOGGER.warning("runtime_error type=%s detail=%.300r", type(error).__name__, str(error))
 		if isinstance(mapped, BridgeRuntimeError):
 			self.close()
 		return mapped
@@ -355,10 +364,15 @@ class CodexRuntime:
 		finally:
 			executor.shutdown(wait=False, cancel_futures=True)
 
-		if any(
-			type(getattr(item, "root", item)).__name__ not in ALLOWED_TURN_ITEM_TYPES
-			for item in getattr(result, "items", [])
-		):
+		unexpected = {
+			type(getattr(item, "root", item)).__name__ for item in getattr(result, "items", [])
+		} - ALLOWED_TURN_ITEM_TYPES
+		if unexpected == {"ContextCompactionThreadItem"}:
+			# Codex compacted the prompt because it outgrew the model's context window. The runtime is
+			# healthy, so reject this request without retiring it (a retired runtime restarts the bridge).
+			raise BridgePromptTooLargeError("prompt exceeds the model context window")
+		if unexpected:
+			LOGGER.warning("disabled_item types=%s", sorted(unexpected))
 			self.close()
 			raise BridgeRuntimeError("Codex attempted a disabled native tool")
 		if not result.final_response:
@@ -603,6 +617,10 @@ class BridgeHandler(BaseHTTPRequestHandler):
 			except BridgeTimeoutError:
 				status = 504
 				self._send_error(status, "Codex turn timed out", "timeout")
+				return
+			except BridgePromptTooLargeError:
+				status = 413
+				self._send_error(status, "prompt too large for the model context", "invalid_request")
 				return
 			except BridgeRuntimeError:
 				status = 503

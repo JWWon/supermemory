@@ -66,8 +66,27 @@ Supermemory key never does.
 Calibrated on 520 Korean and English questions against the personal store:
 top-1 recall rose from 57.1% to 71.9% and top-10 from 86.5% to 93.5%, and the
 0.01 floor never removed a correct memory. Reranking adds about 0.7 seconds per
-search (about 1.75 seconds when the model has to load first). The official
-hooks' automatic recall does not use this tool and is unchanged.
+search (about 1.75 seconds when the model has to load first).
+
+### Reranked automatic recall
+
+The official Claude and Codex hooks recall through `POST /v4/profile` with
+`{containerTag, q}` and read `searchResults.results`. Caddy sends that one route
+to this service (`lb_policy first`, with `server:6767` as the fallback upstream,
+so recall survives this service being down). With a reranker configured it
+forwards the request to the server unchanged for the profile, fetches 30
+candidates at similarity 0.3, reranks them, and replaces `searchResults.results`
+with the top 15 (each with a `rerankScore`; `similarity` stays the embedding
+score because the hooks cut off on it). If the reranker fails or the 2.5 second
+deadline passes (the hooks give up at 3 to 4 seconds; a reranker that has to
+load takes about 3), the server's own response is returned untouched. Requests
+without a query pass through.
+
+Checked on 2026-10-27 with 66 generated questions (33 Korean, 33 English) against
+the live store, applying each hook's own cutoff (Claude: similarity 0.55, 15
+results; Codex: 0.6, 5 results): Claude top-1 38 to 44, hit@15 55 to 59; Codex
+top-1 36 to 42, hit@5 49 to 54. Recall time rose from about 0.3 to 1.4 seconds at
+the median while the server was saturated by a reprocessing loop.
 
 Requests require the existing `sm_...` Supermemory API key. Keys are forwarded
 only to the fixed first-party API, never to URLs supplied by a tool call;

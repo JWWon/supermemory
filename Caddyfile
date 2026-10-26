@@ -3,6 +3,20 @@
   handle @mcp {
     reverse_proxy mcp:8788
   }
+  # Recall hooks (Claude, Codex) read memories through POST /v4/profile; the MCP service reranks them.
+  # If it is down, Caddy falls back to the server's own answer.
+  @recall {
+    method POST
+    path /v4/profile
+  }
+  handle @recall {
+    reverse_proxy mcp:8788 server:6767 {
+      lb_policy first
+      lb_try_duration 2s
+      fail_duration 30s
+      header_up Host {upstream_hostport}
+    }
+  }
   handle_path /media/* {
     root * /srv/media
     file_server browse

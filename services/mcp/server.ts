@@ -17,6 +17,9 @@ const CANDIDATE_THRESHOLD = 0.3;
 const RERANK_FLOOR = 0.01;
 const RERANK_TIMEOUT_MS = 8000;
 const PLAIN_SEARCH_THRESHOLD = 0.6; // the server's /v4/search default, kept for the fallback
+// The Claude and Codex recall hooks call POST /v4/profile with {containerTag, q}; they give up after 3-4 s.
+const RECALL_RESULTS = 15; // what /v4/profile returns on its own
+const RECALL_DEADLINE_MS = 2500;
 
 export function createApp(apiUrl: string, publicUrl: string, rerankUrl?: string, rerankModel = "bge-reranker-v2-m3") {
   const backend = new URL(apiUrl);
@@ -34,31 +37,32 @@ export function createApp(apiUrl: string, publicUrl: string, rerankUrl?: string,
     if (rejected) return rejected;
     const path = new URL(request.url).pathname;
     if (path === "/health" && request.method === "GET") return Response.json({ status: "ok" });
-    if (path !== "/mcp" && path !== "/mcp/") return new Response("Not found", { status: 404 });
+    const recalling = path === "/v4/profile" && request.method === "POST";
+    if (!recalling && path !== "/mcp" && path !== "/mcp/") return new Response("Not found", { status: 404 });
     const bearer = request.headers.get("authorization");
     if (!bearer || !/^Bearer sm_[^\s,]{17,}$/i.test(bearer) || bearer.length > 512)
       return Response.json({ error: "Supermemory API key required" }, {
         status: 401, headers: { "WWW-Authenticate": 'Bearer realm="supermemory-local"' },
       });
 
-    const api = async (method: string, endpoint: string, body?: unknown) => {
+    const api = async (method: string, endpoint: string, body?: unknown, deadline?: AbortSignal) => {
       const response = await fetch(new URL(endpoint, backend), {
         method, redirect: "error",
         headers: { Authorization: bearer, "Content-Type": "application/json", "x-sm-source": "supermemory-local-mcp" },
         body: body === undefined ? undefined : JSON.stringify(body),
-        signal: AbortSignal.any([request.signal, AbortSignal.timeout(15000)]),
+        signal: AbortSignal.any([request.signal, AbortSignal.timeout(15000), ...(deadline ? [deadline] : [])]),
       });
       if (!response.ok) throw Object.assign(new Error(`Supermemory API returned HTTP ${response.status}`), { status: response.status });
       return response.status === 204 ? {} : await response.json();
     };
 
     // Local cross-encoder scores; never receives the Supermemory key.
-    const rerank = async (query: string, documents: string[]): Promise<number[]> => {
+    const rerank = async (query: string, documents: string[], deadline?: AbortSignal): Promise<number[]> => {
       if (!reranker || documents.length === 0) return [];
       const response = await fetch(reranker, {
         method: "POST", redirect: "error", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model: rerankModel, query, documents, return_documents: false }),
-        signal: AbortSignal.any([request.signal, AbortSignal.timeout(RERANK_TIMEOUT_MS)]),
+        signal: AbortSignal.any([request.signal, AbortSignal.timeout(RERANK_TIMEOUT_MS), ...(deadline ? [deadline] : [])]),
       });
       if (!response.ok) throw new Error(`Reranker returned HTTP ${response.status}`);
       const scores: number[] = new Array(documents.length).fill(Number.NaN);
@@ -66,6 +70,38 @@ export function createApp(apiUrl: string, publicUrl: string, rerankUrl?: string,
       if (scores.some(score => !Number.isFinite(score))) throw new Error("Reranker response incomplete");
       return scores;
     };
+
+    const reorder = async (query: string, candidates: Record<string, any>[], limit: number, deadline?: AbortSignal) => {
+      const scores = await rerank(query, candidates.map(item => String(item.memory ?? item.chunk ?? "")), deadline);
+      return candidates.map((item, i) => ({ ...item, rerankScore: scores[i] }))
+        .filter(item => item.rerankScore >= RERANK_FLOOR)
+        .sort((a, b) => b.rerankScore - a.rerankScore) // stable: ties keep search order
+        .slice(0, limit);
+    };
+
+    // Recall hooks: keep the server's profile, swap its plain-search results for reranked ones, and on any
+    // failure or timeout return the server's own answer untouched.
+    if (recalling) {
+      const text = await request.text();
+      const headers = { Authorization: bearer, "Content-Type": "application/json", "x-sm-source": request.headers.get("x-sm-source") ?? "supermemory-local-mcp" };
+      const native = fetch(new URL("/v4/profile", backend), { method: "POST", redirect: "error", headers, body: text,
+        signal: AbortSignal.any([request.signal, AbortSignal.timeout(15000)]) });
+      let query: { q?: unknown; containerTag?: unknown } = {};
+      try { query = JSON.parse(text); } catch { /* the server will reject it */ }
+      const deadline = AbortSignal.timeout(RECALL_DEADLINE_MS);
+      const better = reranker && typeof query.q === "string" && query.q && typeof query.containerTag === "string"
+        ? api("POST", "/v4/search", { q: query.q, containerTag: query.containerTag, limit: RERANK_CANDIDATES,
+            searchMode: "memories", threshold: CANDIDATE_THRESHOLD }, deadline)
+          .then(found => reorder(query.q as string, found.results ?? [], RECALL_RESULTS, deadline)).catch(() => undefined)
+        : undefined;
+      const response = await native.catch(() => undefined);
+      if (!response) return Response.json({ error: "Supermemory unavailable" }, { status: 503 });
+      const body = await response.text(); // re-wrap: fetch already decoded it, so upstream encoding headers no longer apply
+      const results = await better;
+      const parsed = response.ok && results ? (() => { try { return JSON.parse(body); } catch { return undefined; } })() : undefined;
+      if (!parsed) return new Response(body, { status: response.status, headers: { "Content-Type": response.headers.get("content-type") ?? "application/json" } });
+      return Response.json({ ...parsed, searchResults: { ...parsed.searchResults, results, total: results!.length } });
+    }
 
     let session;
     try {
@@ -116,11 +152,7 @@ export function createApp(apiUrl: string, publicUrl: string, rerankUrl?: string,
         let results: Record<string, any>[];
         let reranked = true;
         try {
-          const scores = await rerank(query, candidates.map(item => String(item.memory ?? item.chunk ?? "")));
-          results = candidates.map((item, i) => ({ ...item, rerankScore: scores[i] }))
-            .filter(item => item.rerankScore >= RERANK_FLOOR)
-            .sort((a, b) => b.rerankScore - a.rerankScore) // stable: ties keep search order
-            .slice(0, limit);
+          results = await reorder(query, candidates, limit);
         } catch {
           // Reranker down or slow: return what plain search would have returned.
           reranked = false;

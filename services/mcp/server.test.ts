@@ -18,7 +18,8 @@ const backend = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request)
     { id: "violet", memory: "Synthetic violet fact", similarity: 0.7 },
     { id: "noise", memory: "Unrelated note", similarity: 0.4 },
   ], total: 3 });
-  if (path === "/v4/profile") return Response.json({ profile: { static: ["Synthetic fact"], dynamic: [] } });
+  if (path === "/v4/profile") return Response.json({ profile: { static: ["Synthetic fact"], dynamic: [] },
+    searchResults: { results: [{ id: "noise", memory: "Unrelated note", similarity: 0.9 }], total: 1, timing: 7 } });
   if (path === "/v3/documents/list") return Response.json({ memories: [{ id: "doc" }], pagination: { currentPage: 1 } });
   if (path === "/v4/memories/list") return Response.json({ memoryEntries: [{ id: "memory" }], pagination: { currentPage: 1 } });
   if (path === "/v3/documents/doc") return Response.json({ id: "doc", containerTags: ["personal"], content: "PRIVATE_DOCUMENT" });
@@ -32,10 +33,12 @@ const url = new URL("/mcp", endpoint.url);
 
 // Fake cross-encoder: prefers "violet", rejects "Unrelated", or fails when told to.
 let rerankerDown = false;
+let rerankerSlow = false;
 const rerankCalls: { authorization: string | null; body: any }[] = [];
 const reranker = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
   const body = await request.json();
   rerankCalls.push({ authorization: request.headers.get("authorization"), body });
+  if (rerankerSlow) await Bun.sleep(3500);
   if (rerankerDown) return new Response("down", { status: 503 });
   const score = (doc: string) => doc.includes("violet") ? 0.95 : doc.includes("indigo") ? 0.5 : 0.0001;
   return Response.json({ results: body.documents.map((doc: string, index: number) => ({ index, relevance_score: score(doc) })) });
@@ -115,4 +118,33 @@ test("reject missing/invalid auth, foreign origins and hosts", async () => {
     const response = await handle(new Request(url, { headers }));
     expect(response.status).toBe(403);
   }
+});
+
+test("/v4/profile recall: reranked results, native profile, and the server's own answer on failure", async () => {
+  const recall = (base: URL, body: unknown, authorization = `Bearer ${key}`) => fetch(new URL("/v4/profile", base), {
+    method: "POST", headers: { "Content-Type": "application/json", Authorization: authorization }, body: JSON.stringify(body) });
+  const native = { profile: { static: ["Synthetic fact"], dynamic: [] },
+    searchResults: { results: [{ id: "noise", memory: "Unrelated note", similarity: 0.9 }], total: 1, timing: 7 } };
+
+  const ranked = await (await recall(rerankingEndpoint.url, { containerTag: "personal", q: "colors" })).json() as any;
+  expect(ranked.profile).toEqual(native.profile);
+  expect(ranked.searchResults.results.map((r: any) => r.id)).toEqual(["violet", "memory"]);
+  expect(ranked.searchResults).toMatchObject({ total: 2, timing: 7 });
+  expect(calls.filter(c => c.path === "/v4/search").at(-1)?.body).toEqual(
+    { q: "colors", containerTag: "personal", limit: 30, searchMode: "memories", threshold: 0.3 });
+
+  rerankerDown = true;
+  try { expect(await (await recall(rerankingEndpoint.url, { containerTag: "personal", q: "colors" })).json()).toEqual(native); }
+  finally { rerankerDown = false; }
+
+  rerankerSlow = true;
+  const started = Date.now();
+  try { expect(await (await recall(rerankingEndpoint.url, { containerTag: "personal", q: "colors" })).json()).toEqual(native); }
+  finally { rerankerSlow = false; }
+  expect(Date.now() - started).toBeLessThan(3200); // gave up at the 2.5 s deadline, not the reranker's 3.5 s
+
+  expect(await (await recall(rerankingEndpoint.url, { containerTag: "personal" })).json()).toEqual(native); // no query: untouched
+  expect(await (await recall(endpoint.url, { containerTag: "personal", q: "colors" })).json()).toEqual(native); // no reranker configured
+  expect((await recall(rerankingEndpoint.url, { containerTag: "personal", q: "colors" }, "Bearer sm_wrong_0123456789abcdef")).status).toBe(401);
+  expect((await fetch(new URL("/v4/profile", rerankingEndpoint.url), { method: "POST" })).status).toBe(401);
 });
