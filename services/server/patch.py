@@ -44,6 +44,17 @@ if hashlib.sha256(data).hexdigest() != BINARY_SHA256:
 if data.count(OLD) != 1 or len(NEW) > len(OLD):
     sys.exit("patch target not found exactly once")
 patched = data.replace(OLD, NEW[:-1] + b" " * (len(OLD) - len(NEW)) + b"}")
+
+# Snapshot interval 10 s -> 300 s, the workaround reported in supermemoryai/supermemory#1826.
+# Each dirty tick dumps, gzips and encrypts the whole store in memory, so at about 1.4 GB
+# back-to-back ticks during ingestion pushed the server past its memory limit. A crash can
+# now lose up to 5 minutes of writes; a normal stop still writes a final snapshot.
+INTERVAL_OLD = b'Om0="supermemory-pglite-v1",ov8=1e4;'
+INTERVAL_NEW = b'Om0="supermemory-pglite-v1",ov8=3e5;'
+if patched.count(INTERVAL_OLD) != 1:
+    sys.exit("snapshot interval target not found exactly once")
+patched = patched.replace(INTERVAL_OLD, INTERVAL_NEW)
+
 assert len(patched) == len(data)
 open(sys.argv[1], "wb").write(patched)
-print(f"patched snapshot dirty tracking ({len(OLD)} bytes)")
+print(f"patched snapshot dirty tracking ({len(OLD)} bytes) and snapshot interval (300 s)")

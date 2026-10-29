@@ -11,8 +11,9 @@ services:
     ports: ["127.0.0.1:6767:6767"]
     volumes: ["sm-data:/data"]
     env_file: [.env]
-    # 0.0.9 peaked at 6.5 GB while opening the migrated store; 6g also OOM-killed 0.0.8 under load.
-    mem_limit: 8g
+    # Lite keeps the whole store in RAM; at 1.36 GB on disk, 8g OOM-killed every boot (2026-10-30).
+    # Stay under OrbStack's 12 GiB VM (memory_mib 12288); the other containers use about 150 MB.
+    mem_limit: 10752m
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:6767/v3/health"]
       interval: 30s
