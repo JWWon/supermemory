@@ -589,6 +589,34 @@ class BridgeHTTPTest(unittest.TestCase):
 				)
 				self.assertEqual(response.status, expected_status)
 
+	def test_agent_run_over_the_prompt_limit_ends_cleanly(self):
+		self.runtime.error = BridgePromptTooLargeError("too large")
+
+		response, body = self.request(
+			"POST",
+			"/v1/chat/completions",
+			body={
+				"model": "fixture-model",
+				"messages": [{"role": "user", "content": "Extract memories"}],
+				"tools": [
+					{
+						"type": "function",
+						"function": {
+							"name": "readChunks",
+							"description": "Read chunks",
+							"parameters": {"type": "object", "properties": {}},
+						},
+					}
+				],
+			},
+			token=self.token,
+		)
+
+		self.assertEqual(response.status, 200)
+		choice = body["choices"][0]
+		self.assertEqual(choice["finish_reason"], "stop")
+		self.assertNotIn("tool_calls", choice["message"])
+
 	def test_maps_invalid_codex_output_to_502(self):
 		self.runtime.text_override = "not-json"
 

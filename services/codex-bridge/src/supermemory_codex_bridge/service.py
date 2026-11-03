@@ -19,6 +19,7 @@ from openai_codex import ApprovalMode, Codex, CodexConfig, Sandbox
 
 from .translator import (
 	BridgeProtocolError,
+	BridgeResult,
 	CodexTurn,
 	build_codex_turn,
 	parse_codex_result,
@@ -619,8 +620,27 @@ class BridgeHandler(BaseHTTPRequestHandler):
 				self._send_error(status, "Codex turn timed out", "timeout")
 				return
 			except BridgePromptTooLargeError:
-				status = 413
-				self._send_error(status, "prompt too large for the model context", "invalid_request")
+				if not turn.tool_schemas:
+					status = 413
+					self._send_error(status, "prompt too large for the model context", "invalid_request")
+					return
+				# The memory agent resends every chunk it has read, so a long document never fits, and one
+				# failed document fails its whole batch, which the server retries forever (4,787 times on
+				# 2026-11-03). Ending the run keeps the memories already saved and lets the batch finish.
+				LOGGER.warning("agent_run_stopped_at_prompt_limit id=%s bytes=%d", request_id, body_size)
+				status = 200
+				self._send_json(
+					status,
+					to_chat_completion(
+						BridgeResult(
+							content="Stopped: the document is too large to read in full.",
+							tool_calls=(),
+							finish_reason="stop",
+						),
+						model=self.application.model,
+						request_id=request_id,
+					),
+				)
 				return
 			except BridgeRuntimeError:
 				status = 503

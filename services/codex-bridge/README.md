@@ -132,7 +132,8 @@ never appear.
 | 400 | Request differs from the captured protocol | Stop and recapture the SuperMemory version. |
 | 401 | ChatGPT auth missing/expired | Run device login again. |
 | 413 | Request exceeds 8 MiB | Do not broaden without a design review. |
-| 413 | Prompt over the model's context window (Codex compacts it) or over Codex's 1,048,576-character input limit | The runtime stays up and nothing is retired. The server fails that memory-agent run; a document that keeps growing will keep failing. |
+| 413 | Prompt over the model's context window (Codex compacts it) or over Codex's 1,048,576-character input limit, on a request without tools | The runtime stays up and nothing is retired. |
+| 200 | The same limit on a memory-agent request (with tools) | The run ends with `finish_reason: stop` and `agent_run_stopped_at_prompt_limit` in the log. Memories already saved are kept; the rest of that document is not extracted, so split it to cover it. A 413 here fails the whole batch and the server retries it forever. |
 | 429 | Bridge busy or subscription quota reached | Wait for the request/reset; do not re-login for quota. |
 | 502 | Codex returned invalid tool JSON | Inspect metadata-only logs and run the fixture suite. |
 | 503 | SDK/App Server unavailable | An irrecoverable runtime exits after returning the error; Compose restarts it. |
