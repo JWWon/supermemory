@@ -1,10 +1,10 @@
 name: supermemory
 services:
   server:
-    # Official 0.0.9 image plus a temporary snapshot patch (services/server); same uid 10001 owns /data.
+    # Official 0.0.9 image plus patch.py (services/server): disk-backed store, no boot self-kill. Same uid 10001 owns /data.
     # When a fixed release ships, drop `build` and set `image: docker.io/supermemory/supermemory:<version>`.
     build: ./services/server
-    image: supermemory-server:0.0.9-snapshot-patch
+    image: supermemory-server:0.0.9-disk
     init: true
     # The shutdown snapshot takes about a minute at 1.65 GB; a shorter grace kills it and drops recent writes.
     stop_grace_period: 180s
@@ -12,9 +12,10 @@ services:
     ports: ["127.0.0.1:6767:6767"]
     volumes: ["sm-data:/data"]
     env_file: [.env]
-    # Lite keeps the whole store in RAM; at 1.36 GB on disk, 8g OOM-killed every boot (2026-10-30).
-    # Stay under OrbStack's 12 GiB VM (memory_mib 12288); the other containers use about 150 MB.
-    mem_limit: 10752m
+    # On disk the server runs about 1.4 GiB, 1.7 GiB at boot (2026-11-03); ingestion may add 2 GB.
+    # No swap allowance, so a leak restarts this container instead of exhausting the 12 GiB VM for all.
+    mem_limit: 6g
+    memswap_limit: 6g
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:6767/v3/health"]
       interval: 30s
@@ -53,7 +54,8 @@ services:
     ports: ["127.0.0.1:8443:8443"]
     volumes: ["./Caddyfile:/etc/caddy/Caddyfile:ro", "./media:/srv/media:ro"]
 volumes:
-  # Migrated to 0.0.9 on 2026-10-17; the untouched 0.0.8 store stays in volume supermemory_sm-data for rollback.
+  # Disk-backed store in /data/pg since 2026-11-03. Volume supermemory_sm-data-009 keeps the last
+  # encrypted in-memory snapshot (stock 0.0.9 format) for rollback.
   sm-data:
     external: true
-    name: supermemory_sm-data-009
+    name: supermemory_sm-data-pg

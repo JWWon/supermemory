@@ -1,5 +1,8 @@
 """Temporary same-length patch for supermemory-server 0.0.9; delete it with 0.0.10.
 
+Before any upgrade, start once with SM_SNAPSHOT=1 and stop it, so `data` holds the current store
+in the stock encrypted format (see the disk-backed store section below).
+
 0.0.9 re-dumps the whole encrypted store (about 800 MB here) after any 10-second
 window in which a non-read statement ran (supermemoryai/supermemory#1413). Its
 every-minute ingestion coordinator inserts and deletes a lease row in "cache",
@@ -66,6 +69,59 @@ if patched.count(REAP_OLD) != 1:
     sys.exit("engine reaper target not found exactly once")
 patched = patched.replace(REAP_OLD, REAP_NEW)
 
+# Disk-backed store. Stock 0.0.9 keeps the whole Postgres data directory in memory and dumps, gzips
+# and encrypts all of it on every dirty tick, so boot and snapshot peaks run about 7x the store and hit
+# the VM's ceiling at 1.65 GB. A plain path makes PGlite use the NodeFS class already in the bundle.
+# The first boot loads the encrypted `data` into <data>/pg once; later boots open <data>/pg directly.
+# SM_SNAPSHOT=1 restores the snapshot timer, which writes `data` on stop: the way back to stock.
+# Single-user Postgres has no checkpointer, hence the CHECKPOINT timer.
+OLD_LOAD = (
+    b'if(await Ev8(q)){let O=await Dv8(q),p;try{p=lP(Om0,Tm0,O)}catch{throw Error(tv8(q,V))}'
+    b'$=new Blob([p]),G4(`[storage] Loaded snapshot (${(O.length/1024).toFixed(1)} KB ciphertext '
+    b'\\u2192 ${(p.length/1024).toFixed(1)} KB plaintext)`)}'
+    b'else G4("[storage] No snapshot found \\u2014 fresh start.");'
+)
+NEW_LOAD = (
+    b'if(await Ev8(q)&&!await Ev8(V+"/pg/PG_VERSION")){let O=await Dv8(q),p;'
+    b'try{p=lP(Om0,Tm0,O)}catch{throw Error(tv8(q,V))}$=new Blob([p])}'
+)
+OLD_BOOT = (
+    b'async function iJ8(){G4(`[db] Mode: encrypted local storage (${H2})`);let V=await Bv8(H2),'
+    b'q=V.loadBlob?await YX8(m54(jX8(),"supermemory-preflight-")):void 0,$;try{'
+    b'let{wasmModule:X,fsBundle:W,vectorExtension:v}=await ZJ8(q);$=new BY("memory://",{wasmModule:X,'
+    b'fsBundle:W,extensions:{vector:v},...V.loadBlob?{loadDataDir:V.loadBlob}:{}}),await $.waitReady;'
+    b'let z=await Bz8($,H2,V.loadBlob!==null);if(z)a$(`Verified original-store backup: ${z}`);'
+    b'return await $.exec("CREATE EXTENSION IF NOT EXISTS vector"),L94($,UR),'
+    b'G4("[migrate] Applying embedded migrations..."),await Mv8($),C00=V.install($),$}catch(X)'
+)
+NEW_BOOT = (
+    b'async function iJ8(){let V=await Bv8(H2),'
+    b'q=V.loadBlob?await YX8(m54(jX8(),"supermemory-preflight-")):void 0,$;try{'
+    b'let{wasmModule:X,fsBundle:W,vectorExtension:v}=await ZJ8(q);$=new BY(H2+"/pg",{wasmModule:X,'
+    b'fsBundle:W,extensions:{vector:v},...V.loadBlob?{loadDataDir:V.loadBlob}:{}}),await $.waitReady;'
+    b'await Bz8($,H2,V.loadBlob!==null);'
+    b'return await $.exec("CREATE EXTENSION IF NOT EXISTS vector"),L94($,UR),'
+    b'await Mv8($),C00=process.env.SM_SNAPSHOT?V.install($):'
+    b'(setInterval(()=>$.exec("CHECKPOINT").catch(console.error),6e5).unref(),'
+    b'{stop:()=>$.exec("CHECKPOINT")}),$}catch(X)'
+)
+
+
+def pad(new: bytes, old: bytes, keep_tail: bytes = b"") -> bytes:
+    """Fill with spaces before keep_tail so the binary keeps its length; JavaScript ignores them."""
+    if len(new) > len(old) or not new.endswith(keep_tail):
+        sys.exit("disk-store replacement does not fit")
+    return new[: len(new) - len(keep_tail)] + b" " * (len(old) - len(new)) + keep_tail
+
+
+for old_bytes, new_bytes in [(OLD_LOAD, pad(NEW_LOAD, OLD_LOAD)), (OLD_BOOT, pad(NEW_BOOT, OLD_BOOT, b"$}catch(X)"))]:
+    if patched.count(old_bytes) != 1:
+        sys.exit(f"disk-store target not found exactly once: {old_bytes[:40]!r}")
+    patched = patched.replace(old_bytes, new_bytes)
+# Same-length labels, so boot output no longer claims encryption.
+patched = patched.replace(b'"encrypted local storage"', b'"disk-backed local store"')
+patched = patched.replace(b'database:`encrypted local storage (', b'database:`disk-backed local store (')
+
 assert len(patched) == len(data)
 open(sys.argv[1], "wb").write(patched)
-print(f"patched snapshot dirty tracking ({len(OLD)} bytes), snapshot interval (300 s), engine reaper")
+print(f"patched snapshot dirty tracking ({len(OLD)} bytes), snapshot interval (300 s), engine reaper, disk-backed store")
