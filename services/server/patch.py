@@ -55,6 +55,17 @@ if patched.count(INTERVAL_OLD) != 1:
     sys.exit("snapshot interval target not found exactly once")
 patched = patched.replace(INTERVAL_OLD, INTERVAL_NEW)
 
+# Boot SIGKILLs the PID in the previous run's runtime/rivet/engine.pid without checking it is the
+# engine. A new container restarts PIDs and thread ids low, so after any crash that number is often
+# the server itself: exit 137, no OOM, and the file survives to do it again on the next boot. A new
+# PID namespace cannot hold an orphan engine, and the file is overwritten once the engine starts.
+REAP_OLD = b'if(!Number.isInteger($)||$<=1)return;try{process.kill($,"SIGKILL")'
+REAP_NEW = b'return;' + b" " * 30 + b'try{process.kill($,"SIGKILL")'
+assert len(REAP_OLD) == len(REAP_NEW)
+if patched.count(REAP_OLD) != 1:
+    sys.exit("engine reaper target not found exactly once")
+patched = patched.replace(REAP_OLD, REAP_NEW)
+
 assert len(patched) == len(data)
 open(sys.argv[1], "wb").write(patched)
-print(f"patched snapshot dirty tracking ({len(OLD)} bytes) and snapshot interval (300 s)")
+print(f"patched snapshot dirty tracking ({len(OLD)} bytes), snapshot interval (300 s), engine reaper")

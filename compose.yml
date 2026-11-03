@@ -6,7 +6,8 @@ services:
     build: ./services/server
     image: supermemory-server:0.0.9-snapshot-patch
     init: true
-    stop_grace_period: 40s
+    # The shutdown snapshot takes about a minute at 1.65 GB; a shorter grace kills it and drops recent writes.
+    stop_grace_period: 180s
     restart: unless-stopped
     ports: ["127.0.0.1:6767:6767"]
     volumes: ["sm-data:/data"]
